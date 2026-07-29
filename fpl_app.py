@@ -46,10 +46,21 @@ def load_fpl_data():
       "form",
       "expected_goals",
       "expected_assists",
+      "minutes",
   ]
   for col in numeric_cols:
     if col in players.columns:
       players[col] = pd.to_numeric(players[col], errors="coerce")
+
+  # Calculate Points Per 90 safely (avoiding division by zero)
+  players["points_per_90"] = players.apply(
+      lambda row: (
+          round((row["total_points"] / row["minutes"]) * 90, 2)
+          if row["minutes"] > 0
+          else 0.0
+      ),
+      axis=1,
+  )
 
   return players, data
 
@@ -75,12 +86,17 @@ if df_players is not None:
   )
 
   st.sidebar.markdown("---")
-  st.sidebar.subheader("Threshold Filters")
+  st.sidebar.subheader("Threshold & Minutes Filters")
   st.sidebar.markdown(
-      "Type a minimum requirement. Leave at 0 to ignore a metric."
+      "Type minimum requirements. Leave at 0 to ignore a metric."
   )
 
-  # Optional Numeric Threshold Inputs (Defaults set to 0.0)
+  # Minutes Played Filter (e.g., 180 mins)
+  min_minutes = st.sidebar.number_input(
+      "Min Minutes Played", min_value=0, value=0, step=90
+  )
+
+  # Optional Numeric Threshold Inputs
   min_influence = st.sidebar.number_input(
       "Min Influence", min_value=0.0, value=0.0, step=10.0
   )
@@ -107,7 +123,11 @@ if df_players is not None:
   # Apply Price Filter
   filtered_df = filtered_df[filtered_df["now_cost"] <= max_price]
 
-  # Apply Threshold Filters dynamically (only if greater than 0)
+  # Apply Minutes Filter
+  if min_minutes > 0:
+    filtered_df = filtered_df[filtered_df["minutes"] >= min_minutes]
+
+  # Apply Threshold Filters dynamically
   if min_influence > 0:
     filtered_df = filtered_df[filtered_df["influence"] >= min_influence]
   if min_threat > 0:
@@ -130,8 +150,9 @@ if df_players is not None:
       "position",
       "now_cost",
       "total_points",
+      "points_per_90",
+      "minutes",
       "form",
-      "influence",
       "threat",
       "creativity",
       "expected_goals",
@@ -152,6 +173,8 @@ if df_players is not None:
                 "position": "Pos",
                 "now_cost": "Price (£m)",
                 "total_points": "Points",
+                "points_per_90": "Pts/90",
+                "minutes": "Mins",
                 "selected_by_percent": "Ownership %",
                 "expected_goals": "xG",
             }
