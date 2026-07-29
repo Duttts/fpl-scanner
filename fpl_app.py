@@ -9,7 +9,8 @@ st.set_page_config(
 
 st.title("⚽ FPL Custom Signal & Threshold Scanner")
 st.markdown(
-    "Filter live Fantasy Premier League data dynamically. Set a threshold only when you want to filter."
+    "Filter live Fantasy Premier League data dynamically. Set a threshold only"
+    " when you want to filter."
 )
 
 
@@ -24,10 +25,9 @@ def load_fpl_data():
 
   data = response.json()
   players = pd.DataFrame(data["elements"])
-  teams = data["teams"] and pd.DataFrame(data["teams"]) or None
+  teams_df = pd.DataFrame(data["teams"])
   element_types = pd.DataFrame(data["element_types"])
 
-  teams_df = pd.DataFrame(data["teams"])
   team_mapping = teams_df.set_index("id")["short_name"].to_dict()
   players["team_name"] = players["team"].map(team_mapping)
 
