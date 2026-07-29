@@ -9,7 +9,7 @@ st.set_page_config(
 
 st.title("⚽ FPL Custom Signal & Threshold Scanner")
 st.markdown(
-    "Filter live Fantasy Premier League data dynamically. Type a minimum threshold for any metric, or leave it blank/none to skip it."
+    "Filter live Fantasy Premier League data dynamically. Set a threshold only when you want to filter."
 )
 
 
@@ -24,21 +24,18 @@ def load_fpl_data():
 
   data = response.json()
   players = pd.DataFrame(data["elements"])
-  teams = pd.DataFrame(data["teams"])
+  teams = data["teams"] and pd.DataFrame(data["teams"]) or None
   element_types = pd.DataFrame(data["element_types"])
 
-  # Map team names
-  team_mapping = teams.set_index("id")["short_name"].to_dict()
+  teams_df = pd.DataFrame(data["teams"])
+  team_mapping = teams_df.set_index("id")["short_name"].to_dict()
   players["team_name"] = players["team"].map(team_mapping)
 
-  # Map position names (Goalkeeper, Defender, Midfielder, Forward)
   position_mapping = element_types.set_index("id")["singular_name"].to_dict()
   players["position"] = players["element_type"].map(position_mapping)
 
-  # Convert price from FPL integer format (e.g. 45 -> 4.5) to float
   players["now_cost"] = players["now_cost"] / 10.0
 
-  # Convert key object columns to numeric safely
   numeric_cols = [
       "now_cost",
       "total_points",
@@ -74,16 +71,16 @@ if df_players is not None:
       float(df_players["now_cost"].max()),
   )
   max_price = st.sidebar.slider(
-      "Max Price (m)", min_value=min_p, max_value=max_p, value=max_p, step=0.1
+      "Max Price (£m)", min_value=min_p, max_value=max_p, value=max_p, step=0.1
   )
 
   st.sidebar.markdown("---")
-  st.sidebar.subheader("Threshold Sliders (Optional)")
+  st.sidebar.subheader("Threshold Filters")
   st.sidebar.markdown(
-      "Leave a box empty or set to 0 to ignore that requirement."
+      "Type a minimum requirement. Leave at 0 to ignore a metric."
   )
 
-  # Optional Numeric Threshold Inputs
+  # Optional Numeric Threshold Inputs (Defaults set to 0.0)
   min_influence = st.sidebar.number_input(
       "Min Influence", min_value=0.0, value=0.0, step=10.0
   )
@@ -163,6 +160,6 @@ if df_players is not None:
     )
   else:
     st.warning(
-        "No players match this exact combination of filters. Try loosening"
-        " your parameters or setting some thresholds back to zero/none."
+        "No players match this exact combination of filters. Try lowering"
+        " your thresholds back to 0."
     )
