@@ -14,16 +14,22 @@ st.markdown(
 )
 
 
-# --- 2. LOAD LIVE FPL DATA ---
+# --- 2. LOAD LIVE FPL & FIXTURE DATA ---
 @st.cache_data(ttl=3600)
 def load_fpl_data():
-  url = "https://fantasy.premierleague.com/api/bootstrap-static/"
-  response = requests.get(url)
-  if response.status_code != 200:
+  url_bootstrap = "https://fantasy.premierleague.com/api/bootstrap-static/"
+  url_fixtures = "https://fantasy.premierleague.com/api/fixtures/"
+
+  response_b = requests.get(url_bootstrap)
+  response_f = requests.get(url_fixtures)
+
+  if response_b.status_code != 200 or response_f.status_code != 200:
     st.error("Failed to fetch live data from Fantasy Premier League API.")
     return None, None
 
-  data = response.json()
+  data = response_b.json()
+  fixtures = response_f.json()
+
   players = pd.DataFrame(data["elements"])
   teams_df = pd.DataFrame(data["teams"])
   element_types = pd.DataFrame(data["element_types"])
@@ -36,6 +42,32 @@ def load_fpl_data():
 
   players["now_cost"] = players["now_cost"] / 10.0
 
+  # Calculate Next 5 Fixture Difficulty Rating (FDR) for each team
+  team_fdr_map = {}
+  for team_id in teams_df["id"]:
+    # Find unplayed fixtures for this team
+    team_fixtures = [
+        f
+        for f in fixtures
+        if (f["team_h"] == team_id or f["team_a"] == team_id)
+        and not f["finished"]
+    ]
+    # Take the next 5 upcoming matches
+    next_5 = team_fixtures[:5]
+
+    if next_5:
+      difficulties = []
+      for f in next_5:
+        if f["team_h"] == team_id:
+          difficulties.append(f["team_h_difficulty"])
+        else:
+          difficulties.append(f["team_a_difficulty"])
+      team_fdr_map[team_id] = round(sum(difficulties) / len(difficulties), 2)
+    else:
+      team_fdr_map[team_id] = 3.0  # Fallback neutral average
+
+  players["next_5_fdr"] = players["team"].map(team_fdr_map)
+
   numeric_cols = [
       "now_cost",
       "total_points",
@@ -47,12 +79,13 @@ def load_fpl_data():
       "expected_goals",
       "expected_assists",
       "minutes",
+      "next_5_fdr",
   ]
   for col in numeric_cols:
     if col in players.columns:
       players[col] = pd.to_numeric(players[col], errors="coerce")
 
-  # Calculate Points Per 90 safely (avoiding division by zero)
+  # Calculate Points Per 90 safely
   players["points_per_90"] = players.apply(
       lambda row: (
           round((row["total_points"] / row["minutes"]) * 90, 2)
@@ -65,7 +98,7 @@ def load_fpl_data():
   return players, data
 
 
-with st.spinner("Connecting to live FPL data feed..."):
+with st.spinner("Connecting to live FPL data & fixture feed..."):
   df_players, raw_data = load_fpl_data()
 
 if df_players is not None:
@@ -86,17 +119,24 @@ if df_players is not None:
   )
 
   st.sidebar.markdown("---")
-  st.sidebar.subheader("Threshold & Minutes Filters")
+  st.sidebar.subheader("Fixture & Threshold Filters")
+
+  # Max Next 5 Fixture Difficulty Slider (Lower = Easier fixtures)
+  max_fdr = st.sidebar.slider(
+      "Max Next 5 Fixture Difficulty (FDR)",
+      min_value=1.0,
+      max_value=5.0,
+      value=5.0,
+      step=0.1,
+  )
   st.sidebar.markdown(
-      "Type minimum requirements. Leave at 0 to ignore a metric."
+      "*(Lower FDR means easier upcoming games. 1=Very Easy, 5=Very Hard)*"
   )
 
-  # Minutes Played Filter (e.g., 180 mins)
+  st.sidebar.markdown("---")
   min_minutes = st.sidebar.number_input(
       "Min Minutes Played", min_value=0, value=0, step=90
   )
-
-  # Optional Numeric Threshold Inputs
   min_influence = st.sidebar.number_input(
       "Min Influence", min_value=0.0, value=0.0, step=10.0
   )
@@ -122,6 +162,9 @@ if df_players is not None:
 
   # Apply Price Filter
   filtered_df = filtered_df[filtered_df["now_cost"] <= max_price]
+
+  # Apply Fixture Difficulty Filter (Keep teams with FDR <= chosen max)
+  filtered_df = filtered_df[filtered_df["next_5_fdr"] <= max_fdr]
 
   # Apply Minutes Filter
   if min_minutes > 0:
@@ -149,12 +192,12 @@ if df_players is not None:
       "team_name",
       "position",
       "now_cost",
+      "next_5_fdr",
       "total_points",
       "points_per_90",
       "minutes",
       "form",
       "threat",
-      "creativity",
       "expected_goals",
       "selected_by_percent",
   ]
@@ -172,6 +215,7 @@ if df_players is not None:
                 "team_name": "Team",
                 "position": "Pos",
                 "now_cost": "Price (£m)",
+                "next_5_fdr": "Next 5 FDR",
                 "total_points": "Points",
                 "points_per_90": "Pts/90",
                 "minutes": "Mins",
@@ -183,6 +227,6 @@ if df_players is not None:
     )
   else:
     st.warning(
-        "No players match this exact combination of filters. Try lowering"
-        " your thresholds back to 0."
+        "No players match this exact combination of filters. Try loosening"
+        " your fixture difficulty slider or thresholds."
     )
