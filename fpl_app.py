@@ -45,14 +45,12 @@ def load_fpl_data():
   # Calculate Next 5 Fixture Difficulty Rating (FDR) for each team
   team_fdr_map = {}
   for team_id in teams_df["id"]:
-    # Find unplayed fixtures for this team
     team_fixtures = [
         f
         for f in fixtures
         if (f["team_h"] == team_id or f["team_a"] == team_id)
         and not f["finished"]
     ]
-    # Take the next 5 upcoming matches
     next_5 = team_fixtures[:5]
 
     if next_5:
@@ -82,13 +80,19 @@ def load_fpl_data():
       "next_5_fdr",
       "bps",
       "bonus",
-      "clean_sheets",
-      "goals_conceded",
-      "creativity",
+      "defensive_contributions",
   ]
   for col in numeric_cols:
     if col in players.columns:
       players[col] = pd.to_numeric(players[col], errors="coerce")
+
+  # Handle missing/fallback if defensive_contributions isn't populated directly in older subsets
+  if "defensive_contributions" not in players.columns:
+    players["defensive_contributions"] = 0
+  else:
+    players["defensive_contributions"] = players[
+        "defensive_contributions"
+    ].fillna(0)
 
   # Calculate Points Per 90 safely
   players["points_per_90"] = players.apply(
@@ -168,11 +172,18 @@ if df_players is not None:
       "Min Form", min_value=0.0, value=0.0, step=0.5
   )
 
-  # New Defensive & Bonus Filters
+  # Defensive Contributions & Bonus Filters
   st.sidebar.markdown("---")
   st.sidebar.subheader("🛡️ Defensive & Bonus Filters")
-  min_clean_sheets = st.sidebar.number_input(
-      "Min Clean Sheets", min_value=0, value=0, step=1
+  min_def_contrib = st.sidebar.number_input(
+      "Min Defensive Contributions (CBIT/CBITR)",
+      min_value=0,
+      value=0,
+      step=5,
+      help=(
+          "Tracks blocks, clearances, interceptions, tackles, and ball"
+          " recoveries."
+      ),
   )
   min_bonus = st.sidebar.number_input(
       "Min Bonus Points Accumulated", min_value=0, value=0, step=1
@@ -211,8 +222,10 @@ if df_players is not None:
     filtered_df = filtered_df[filtered_df["form"] >= min_form]
 
   # Apply Defensive & Bonus Thresholds
-  if min_clean_sheets > 0:
-    filtered_df = filtered_df[filtered_df["clean_sheets"] >= min_clean_sheets]
+  if min_def_contrib > 0:
+    filtered_df = filtered_df[
+        filtered_df["defensive_contributions"] >= min_def_contrib
+    ]
   if min_bonus > 0:
     filtered_df = filtered_df[filtered_df["bonus"] >= min_bonus]
   if min_bps > 0:
@@ -231,7 +244,7 @@ if df_players is not None:
       "next_5_fdr",
       "total_points",
       "points_per_90",
-      "clean_sheets",
+      "defensive_contributions",
       "bonus",
       "bps",
       "bps_per_90",
@@ -256,7 +269,7 @@ if df_players is not None:
                 "next_5_fdr": "Next 5 FDR",
                 "total_points": "Points",
                 "points_per_90": "Pts/90",
-                "clean_sheets": "CS",
+                "defensive_contributions": "Def Contrib",
                 "bonus": "Bonus",
                 "bps": "Total BPS",
                 "bps_per_90": "BPS/90",
