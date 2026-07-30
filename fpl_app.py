@@ -66,6 +66,14 @@ def load_fpl_data():
 
   players["next_5_fdr"] = players["team"].map(team_fdr_map)
 
+  # Ensure defensive_contributions column exists safely
+  if "defensive_contributions" not in players.columns:
+    players["defensive_contributions"] = 0
+  else:
+    players["defensive_contributions"] = players[
+        "defensive_contributions"
+    ].fillna(0)
+
   numeric_cols = [
       "now_cost",
       "total_points",
@@ -76,6 +84,7 @@ def load_fpl_data():
       "form",
       "expected_goals",
       "expected_assists",
+      "expected_goal_involvements",
       "minutes",
       "next_5_fdr",
       "bps",
@@ -86,32 +95,34 @@ def load_fpl_data():
     if col in players.columns:
       players[col] = pd.to_numeric(players[col], errors="coerce")
 
-  # Handle missing/fallback if defensive_contributions isn't populated directly in older subsets
-  if "defensive_contributions" not in players.columns:
-    players["defensive_contributions"] = 0
-  else:
-    players["defensive_contributions"] = players[
-        "defensive_contributions"
-    ].fillna(0)
+  # --- CALCULATE RATES PER 90 ---
+  def calc_per_90(row, col_name):
+    return (
+        round((row[col_name] / row["minutes"]) * 90, 2)
+        if row["minutes"] > 0
+        else 0.0
+    )
 
-  # Calculate Points Per 90 safely
   players["points_per_90"] = players.apply(
-      lambda row: (
-          round((row["total_points"] / row["minutes"]) * 90, 2)
-          if row["minutes"] > 0
-          else 0.0
-      ),
-      axis=1,
+      lambda r: calc_per_90(r, "total_points"), axis=1
   )
-
-  # Calculate BPS per 90 (Bonus Points System rate)
   players["bps_per_90"] = players.apply(
-      lambda row: (
-          round((row["bps"] / row["minutes"]) * 90, 2)
-          if row["minutes"] > 0
-          else 0.0
-      ),
-      axis=1,
+      lambda r: calc_per_90(r, "bps"), axis=1
+  )
+  players["influence_per_90"] = players.apply(
+      lambda r: calc_per_90(r, "influence"), axis=1
+  )
+  players["threat_per_90"] = players.apply(
+      lambda r: calc_per_90(r, "threat"), axis=1
+  )
+  players["creativity_per_90"] = players.apply(
+      lambda r: calc_per_90(r, "creativity"), axis=1
+  )
+  players["xgi_per_90"] = players.apply(
+      lambda r: calc_per_90(r, "expected_goal_involvements"), axis=1
+  )
+  players["def_contrib_per_90"] = players.apply(
+      lambda r: calc_per_90(r, "defensive_contributions"), axis=1
   )
 
   return players, data
@@ -156,41 +167,71 @@ if df_players is not None:
   min_minutes = st.sidebar.number_input(
       "Min Minutes Played", min_value=0, value=0, step=90
   )
-  min_influence = st.sidebar.number_input(
-      "Min Influence", min_value=0.0, value=0.0, step=10.0
-  )
-  min_threat = st.sidebar.number_input(
-      "Min Threat", min_value=0.0, value=0.0, step=10.0
-  )
-  min_creativity = st.sidebar.number_input(
-      "Min Creativity", min_value=0.0, value=0.0, step=10.0
-  )
-  min_xg = st.sidebar.number_input(
-      "Min Expected Goals (xG)", min_value=0.0, value=0.0, step=0.05
-  )
-  min_form = st.sidebar.number_input(
-      "Min Form", min_value=0.0, value=0.0, step=0.5
-  )
 
-  # Defensive Contributions & Bonus Filters
-  st.sidebar.markdown("---")
-  st.sidebar.subheader("🛡️ Defensive & Bonus Filters")
-  min_def_contrib = st.sidebar.number_input(
-      "Min Defensive Contributions (CBIT/CBITR)",
-      min_value=0,
-      value=0,
-      step=5,
+  # --- TOGGLE FOR TOTALS VS PER 90 ---
+  metric_mode = st.sidebar.radio(
+      "Filter Threshold Mode",
+      options=["Total Accumulation", "Per 90 Rates"],
       help=(
-          "Tracks blocks, clearances, interceptions, tackles, and ball"
-          " recoveries."
+          "Switch between filtering by total recorded stats or normalized"
+          " per-90 rates."
       ),
   )
-  min_bonus = st.sidebar.number_input(
-      "Min Bonus Points Accumulated", min_value=0, value=0, step=1
-  )
-  min_bps = st.sidebar.number_input(
-      "Min Total BPS (Bonus System)", min_value=0, value=0, step=25
-  )
+
+  st.sidebar.markdown("---")
+  if metric_mode == "Total Accumulation":
+    min_influence = st.sidebar.number_input(
+        "Min Influence", min_value=0.0, value=0.0, step=10.0
+    )
+    min_threat = st.sidebar.number_input(
+        "Min Threat", min_value=0.0, value=0.0, step=10.0
+    )
+    min_creativity = st.sidebar.number_input(
+        "Min Creativity", min_value=0.0, value=0.0, step=10.0
+    )
+    min_xgi = st.sidebar.number_input(
+        "Min Expected Goal Involvements (xGI)",
+        min_value=0.0,
+        value=0.0,
+        step=0.05,
+    )
+    min_form = st.sidebar.number_input(
+        "Min Form", min_value=0.0, value=0.0, step=0.5
+    )
+    min_def_contrib = st.sidebar.number_input(
+        "Min Defensive Contributions", min_value=0, value=0, step=5
+    )
+    min_bonus = st.sidebar.number_input(
+        "Min Bonus Points Accumulated", min_value=0, value=0, step=1
+    )
+    min_bps = st.sidebar.number_input(
+        "Min Total BPS (Bonus System)", min_value=0, value=0, step=25
+    )
+  else:
+    min_influence = st.sidebar.number_input(
+        "Min Influence Per 90", min_value=0.0, value=0.0, step=5.0
+    )
+    min_threat = st.sidebar.number_input(
+        "Min Threat Per 90", min_value=0.0, value=0.0, step=5.0
+    )
+    min_creativity = st.sidebar.number_input(
+        "Min Creativity Per 90", min_value=0.0, value=0.0, step=5.0
+    )
+    min_xgi = st.sidebar.number_input(
+        "Min xGI Per 90", min_value=0.0, value=0.0, step=0.05
+    )
+    min_form = st.sidebar.number_input(
+        "Min Form", min_value=0.0, value=0.0, step=0.5
+    )
+    min_def_contrib = st.sidebar.number_input(
+        "Min Def Contrib Per 90", min_value=0.0, value=0.0, step=1.0
+    )
+    min_bonus = st.sidebar.number_input(
+        "Min Bonus Per 90", min_value=0.0, value=0.0, step=0.1
+    )
+    min_bps = st.sidebar.number_input(
+        "Min BPS Per 90", min_value=0.0, value=0.0, step=5.0
+    )
 
   # --- 4. APPLY CONDITIONAL LOGIC & FILTERING ---
   filtered_df = df_players.copy()
@@ -209,27 +250,53 @@ if df_players is not None:
   if min_minutes > 0:
     filtered_df = filtered_df[filtered_df["minutes"] >= min_minutes]
 
-  # Apply Threshold Filters dynamically
-  if min_influence > 0:
-    filtered_df = filtered_df[filtered_df["influence"] >= min_influence]
-  if min_threat > 0:
-    filtered_df = filtered_df[filtered_df["threat"] >= min_threat]
-  if min_creativity > 0:
-    filtered_df = filtered_df[filtered_df["creativity"] >= min_creativity]
-  if min_xg > 0:
-    filtered_df = filtered_df[filtered_df["expected_goals"] >= min_xg]
-  if min_form > 0:
-    filtered_df = filtered_df[filtered_df["form"] >= min_form]
-
-  # Apply Defensive & Bonus Thresholds
-  if min_def_contrib > 0:
-    filtered_df = filtered_df[
-        filtered_df["defensive_contributions"] >= min_def_contrib
-    ]
-  if min_bonus > 0:
-    filtered_df = filtered_df[filtered_df["bonus"] >= min_bonus]
-  if min_bps > 0:
-    filtered_df = filtered_df[filtered_df["bps"] >= min_bps]
+  # Apply Threshold Filters dynamically based on selected mode
+  if metric_mode == "Total Accumulation":
+    if min_influence > 0:
+      filtered_df = filtered_df[filtered_df["influence"] >= min_influence]
+    if min_threat > 0:
+      filtered_df = filtered_df[filtered_df["threat"] >= min_threat]
+    if min_creativity > 0:
+      filtered_df = filtered_df[filtered_df["creativity"] >= min_creativity]
+    if min_xgi > 0:
+      filtered_df = filtered_df[
+          filtered_df["expected_goal_involvements"] >= min_xgi
+      ]
+    if min_form > 0:
+      filtered_df = filtered_df[filtered_df["form"] >= min_form]
+    if min_def_contrib > 0:
+      filtered_df = filtered_df[
+          filtered_df["defensive_contributions"] >= min_def_contrib
+      ]
+    if min_bonus > 0:
+      filtered_df = filtered_df[filtered_df["bonus"] >= min_bonus]
+    if min_bps > 0:
+      filtered_df = filtered_df[filtered_df["bps"] >= min_bps]
+  else:
+    if min_influence > 0:
+      filtered_df = filtered_df[
+          filtered_df["influence_per_90"] >= min_influence
+      ]
+    if min_threat > 0:
+      filtered_df = filtered_df[filtered_df["threat_per_90"] >= min_threat]
+    if min_creativity > 0:
+      filtered_df = filtered_df[
+          filtered_df["creativity_per_90"] >= min_creativity
+      ]
+    if min_xgi > 0:
+      filtered_df = filtered_df[filtered_df["xgi_per_90"] >= min_xgi]
+    if min_form > 0:
+      filtered_df = filtered_df[filtered_df["form"] >= min_form]
+    if min_def_contrib > 0:
+      filtered_df = filtered_df[
+          filtered_df["def_contrib_per_90"] >= min_def_contrib
+      ]
+    if min_bonus > 0:
+      filtered_df = filtered_df[
+          filtered_df["bonus_per_90"] >= min_bonus
+      ]  # bonus rate fallback
+    if min_bps > 0:
+      filtered_df = filtered_df[filtered_df["bps_per_90"] >= min_bps]
 
   # Clean up display names and columns
   filtered_df["Player"] = (
@@ -244,9 +311,10 @@ if df_players is not None:
       "next_5_fdr",
       "total_points",
       "points_per_90",
+      "expected_goal_involvements",
+      "xgi_per_90",
       "defensive_contributions",
       "bonus",
-      "bps",
       "bps_per_90",
       "minutes",
       "form",
@@ -269,9 +337,10 @@ if df_players is not None:
                 "next_5_fdr": "Next 5 FDR",
                 "total_points": "Points",
                 "points_per_90": "Pts/90",
+                "expected_goal_involvements": "xGI",
+                "xgi_per_90": "xGI/90",
                 "defensive_contributions": "Def Contrib",
                 "bonus": "Bonus",
-                "bps": "Total BPS",
                 "bps_per_90": "BPS/90",
                 "minutes": "Mins",
                 "selected_by_percent": "Ownership %",
