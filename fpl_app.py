@@ -66,13 +66,14 @@ def load_fpl_data():
 
   players["next_5_fdr"] = players["team"].map(team_fdr_map)
 
-  # Ensure defensive_contributions column exists safely
+  # Explicitly ensure defensive_contributions column exists and is numeric
   if "defensive_contributions" not in players.columns:
     players["defensive_contributions"] = 0
   else:
-    players["defensive_contributions"] = players[
-        "defensive_contributions"
-    ].fillna(0)
+    players["defensive_contributions"] = (
+        pd.to_numeric(players["defensive_contributions"], errors="coerce")
+        .fillna(0)
+    )
 
   numeric_cols = [
       "now_cost",
