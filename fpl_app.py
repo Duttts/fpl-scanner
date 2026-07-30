@@ -237,7 +237,7 @@ if df_players is not None:
         "Min Touches in Box", min_value=0, value=0, step=5
     )
     min_form = st.sidebar.number_input(
-        "Min Form", min_value=0.0, value=0.0, step=0.5
+        "Min Form (Last 30 Days)", min_value=0.0, value=0.0, step=0.5
     )
     min_def_contrib = st.sidebar.number_input(
         "Min Defensive Contributions", min_value=0, value=0, step=5
@@ -274,7 +274,7 @@ if df_players is not None:
         "Min Touches in Box Per 90", min_value=0.0, value=0.0, step=1.0
     )
     min_form = st.sidebar.number_input(
-        "Min Form", min_value=0.0, value=0.0, step=0.5
+        "Min Form (Last 30 Days)", min_value=0.0, value=0.0, step=0.5
     )
     min_def_contrib = st.sidebar.number_input(
         "Min Def Contrib Per 90", min_value=0.0, value=0.0, step=1.0
@@ -303,6 +303,10 @@ if df_players is not None:
   if min_minutes > 0:
     filtered_df = filtered_df[filtered_df["minutes"] >= min_minutes]
 
+  # Apply Form Filter universally (since FPL form is independent of mode totals/rates)
+  if min_form > 0:
+    filtered_df = filtered_df[filtered_df["form"] >= min_form]
+
   # Apply Threshold Filters dynamically based on selected mode
   if metric_mode == "Total Accumulation":
     if min_influence > 0:
@@ -327,8 +331,6 @@ if df_players is not None:
       filtered_df = filtered_df[
           filtered_df["touches_in_penalty_area"] >= min_touches_box
       ]
-    if min_form > 0:
-      filtered_df = filtered_df[filtered_df["form"] >= min_form]
     if min_def_contrib > 0:
       filtered_df = filtered_df[
           filtered_df["defensive_contributions"] >= min_def_contrib
@@ -364,8 +366,6 @@ if df_players is not None:
       filtered_df = filtered_df[
           filtered_df["touches_in_box_per_90"] >= min_touches_box
       ]
-    if min_form > 0:
-      filtered_df = filtered_df[filtered_df["form"] >= min_form]
     if min_def_contrib > 0:
       filtered_df = filtered_df[
           filtered_df["def_contrib_per_90"] >= min_def_contrib
@@ -384,6 +384,7 @@ if df_players is not None:
       "position",
       "now_cost",
       "next_5_fdr",
+      "form",
       "total_points",
       "points_per_90",
       "expected_goal_involvements",
@@ -393,12 +394,13 @@ if df_players is not None:
       "defensive_contributions",
       "bonus",
       "minutes",
-      "form",
       "selected_by_percent",
   ]
 
-  # Sort by total points descending by default
-  filtered_df = filtered_df.sort_values(by="total_points", ascending=False)
+  # Sort by form and total points descending by default
+  filtered_df = filtered_df.sort_values(
+      by=["form", "total_points"], ascending=[False, False]
+  )
 
   # --- 5. RENDER RESULTS ON SCREEN ---
   st.subheader(f"Matching Shortlist ({len(filtered_df)} players found)")
@@ -411,6 +413,7 @@ if df_players is not None:
                 "position": "Pos",
                 "now_cost": "Price (£m)",
                 "next_5_fdr": "Next 5 FDR",
+                "form": "Form",
                 "total_points": "Points",
                 "points_per_90": "Pts/90",
                 "expected_goal_involvements": "xGI",
