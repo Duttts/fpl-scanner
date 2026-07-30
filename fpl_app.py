@@ -66,14 +66,23 @@ def load_fpl_data():
 
   players["next_5_fdr"] = players["team"].map(team_fdr_map)
 
-  # Explicitly ensure defensive_contributions column exists and is numeric
-  if "defensive_contributions" not in players.columns:
-    players["defensive_contributions"] = 0
+  # Safe parsing for defensive contributions / defensive stats key checks
+  def_col_candidates = [
+      "defensive_contributions",
+      "clearances_blocks_interceptions",
+  ]
+  found_def_col = None
+  for col in def_col_candidates:
+    if col in players.columns:
+      found_def_col = col
+      break
+
+  if found_def_col:
+    players["defensive_contributions"] = pd.to_numeric(
+        players[found_def_col], errors="coerce"
+    ).fillna(0)
   else:
-    players["defensive_contributions"] = (
-        pd.to_numeric(players["defensive_contributions"], errors="coerce")
-        .fillna(0)
-    )
+    players["defensive_contributions"] = 0
 
   numeric_cols = [
       "now_cost",
