@@ -80,6 +80,11 @@ def load_fpl_data():
       "expected_assists",
       "minutes",
       "next_5_fdr",
+      "bps",
+      "bonus",
+      "clean_sheets",
+      "goals_conceded",
+      "creativity",
   ]
   for col in numeric_cols:
     if col in players.columns:
@@ -89,6 +94,16 @@ def load_fpl_data():
   players["points_per_90"] = players.apply(
       lambda row: (
           round((row["total_points"] / row["minutes"]) * 90, 2)
+          if row["minutes"] > 0
+          else 0.0
+      ),
+      axis=1,
+  )
+
+  # Calculate BPS per 90 (Bonus Points System rate)
+  players["bps_per_90"] = players.apply(
+      lambda row: (
+          round((row["bps"] / row["minutes"]) * 90, 2)
           if row["minutes"] > 0
           else 0.0
       ),
@@ -153,6 +168,19 @@ if df_players is not None:
       "Min Form", min_value=0.0, value=0.0, step=0.5
   )
 
+  # New Defensive & Bonus Filters
+  st.sidebar.markdown("---")
+  st.sidebar.subheader("🛡️ Defensive & Bonus Filters")
+  min_clean_sheets = st.sidebar.number_input(
+      "Min Clean Sheets", min_value=0, value=0, step=1
+  )
+  min_bonus = st.sidebar.number_input(
+      "Min Bonus Points Accumulated", min_value=0, value=0, step=1
+  )
+  min_bps = st.sidebar.number_input(
+      "Min Total BPS (Bonus System)", min_value=0, value=0, step=25
+  )
+
   # --- 4. APPLY CONDITIONAL LOGIC & FILTERING ---
   filtered_df = df_players.copy()
 
@@ -182,6 +210,14 @@ if df_players is not None:
   if min_form > 0:
     filtered_df = filtered_df[filtered_df["form"] >= min_form]
 
+  # Apply Defensive & Bonus Thresholds
+  if min_clean_sheets > 0:
+    filtered_df = filtered_df[filtered_df["clean_sheets"] >= min_clean_sheets]
+  if min_bonus > 0:
+    filtered_df = filtered_df[filtered_df["bonus"] >= min_bonus]
+  if min_bps > 0:
+    filtered_df = filtered_df[filtered_df["bps"] >= min_bps]
+
   # Clean up display names and columns
   filtered_df["Player"] = (
       filtered_df["first_name"] + " " + filtered_df["second_name"]
@@ -195,10 +231,12 @@ if df_players is not None:
       "next_5_fdr",
       "total_points",
       "points_per_90",
+      "clean_sheets",
+      "bonus",
+      "bps",
+      "bps_per_90",
       "minutes",
       "form",
-      "threat",
-      "expected_goals",
       "selected_by_percent",
   ]
 
@@ -218,9 +256,12 @@ if df_players is not None:
                 "next_5_fdr": "Next 5 FDR",
                 "total_points": "Points",
                 "points_per_90": "Pts/90",
+                "clean_sheets": "CS",
+                "bonus": "Bonus",
+                "bps": "Total BPS",
+                "bps_per_90": "BPS/90",
                 "minutes": "Mins",
                 "selected_by_percent": "Ownership %",
-                "expected_goals": "xG",
             }
         ),
         use_container_width=True,
