@@ -74,6 +74,19 @@ def load_fpl_data():
         "defensive_contributions"
     ].fillna(0)
 
+  # Ensure advanced tracking stats exist safely in raw payload
+  advanced_cols_check = [
+      "shots",
+      "shots_in_the_box",
+      "key_passes",
+      "touches_in_penalty_area",
+  ]
+  for col in advanced_cols_check:
+    if col not in players.columns:
+      players[col] = 0
+    else:
+      players[col] = players[col].fillna(0)
+
   numeric_cols = [
       "now_cost",
       "total_points",
@@ -90,6 +103,10 @@ def load_fpl_data():
       "bps",
       "bonus",
       "defensive_contributions",
+      "shots",
+      "shots_in_the_box",
+      "key_passes",
+      "touches_in_penalty_area",
   ]
   for col in numeric_cols:
     if col in players.columns:
@@ -123,6 +140,18 @@ def load_fpl_data():
   )
   players["def_contrib_per_90"] = players.apply(
       lambda r: calc_per_90(r, "defensive_contributions"), axis=1
+  )
+  players["shots_per_90"] = players.apply(
+      lambda r: calc_per_90(r, "shots"), axis=1
+  )
+  players["shots_in_box_per_90"] = players.apply(
+      lambda r: calc_per_90(r, "shots_in_the_box"), axis=1
+  )
+  players["key_passes_per_90"] = players.apply(
+      lambda r: calc_per_90(r, "key_passes"), axis=1
+  )
+  players["touches_in_box_per_90"] = players.apply(
+      lambda r: calc_per_90(r, "touches_in_penalty_area"), axis=1
   )
 
   return players, data
@@ -195,6 +224,18 @@ if df_players is not None:
         value=0.0,
         step=0.05,
     )
+    min_shots = st.sidebar.number_input(
+        "Min Total Shots", min_value=0, value=0, step=2
+    )
+    min_shots_box = st.sidebar.number_input(
+        "Min Shots in the Box", min_value=0, value=0, step=2
+    )
+    min_key_passes = st.sidebar.number_input(
+        "Min Key Passes", min_value=0, value=0, step=2
+    )
+    min_touches_box = st.sidebar.number_input(
+        "Min Touches in Box", min_value=0, value=0, step=5
+    )
     min_form = st.sidebar.number_input(
         "Min Form", min_value=0.0, value=0.0, step=0.5
     )
@@ -219,6 +260,18 @@ if df_players is not None:
     )
     min_xgi = st.sidebar.number_input(
         "Min xGI Per 90", min_value=0.0, value=0.0, step=0.05
+    )
+    min_shots = st.sidebar.number_input(
+        "Min Shots Per 90", min_value=0.0, value=0.0, step=0.5
+    )
+    min_shots_box = st.sidebar.number_input(
+        "Min Shots in Box Per 90", min_value=0.0, value=0.0, step=0.5
+    )
+    min_key_passes = st.sidebar.number_input(
+        "Min Key Passes Per 90", min_value=0.0, value=0.0, step=0.5
+    )
+    min_touches_box = st.sidebar.number_input(
+        "Min Touches in Box Per 90", min_value=0.0, value=0.0, step=1.0
     )
     min_form = st.sidebar.number_input(
         "Min Form", min_value=0.0, value=0.0, step=0.5
@@ -262,6 +315,18 @@ if df_players is not None:
       filtered_df = filtered_df[
           filtered_df["expected_goal_involvements"] >= min_xgi
       ]
+    if min_shots > 0:
+      filtered_df = filtered_df[filtered_df["shots"] >= min_shots]
+    if min_shots_box > 0:
+      filtered_df = filtered_df[
+          filtered_df["shots_in_the_box"] >= min_shots_box
+      ]
+    if min_key_passes > 0:
+      filtered_df = filtered_df[filtered_df["key_passes"] >= min_key_passes]
+    if min_touches_box > 0:
+      filtered_df = filtered_df[
+          filtered_df["touches_in_penalty_area"] >= min_touches_box
+      ]
     if min_form > 0:
       filtered_df = filtered_df[filtered_df["form"] >= min_form]
     if min_def_contrib > 0:
@@ -285,6 +350,20 @@ if df_players is not None:
       ]
     if min_xgi > 0:
       filtered_df = filtered_df[filtered_df["xgi_per_90"] >= min_xgi]
+    if min_shots > 0:
+      filtered_df = filtered_df[filtered_df["shots_per_90"] >= min_shots]
+    if min_shots_box > 0:
+      filtered_df = filtered_df[
+          filtered_df["shots_in_box_per_90"] >= min_shots_box
+      ]
+    if min_key_passes > 0:
+      filtered_df = filtered_df[
+          filtered_df["key_passes_per_90"] >= min_key_passes
+      ]
+    if min_touches_box > 0:
+      filtered_df = filtered_df[
+          filtered_df["touches_in_box_per_90"] >= min_touches_box
+      ]
     if min_form > 0:
       filtered_df = filtered_df[filtered_df["form"] >= min_form]
     if min_def_contrib > 0:
@@ -292,10 +371,6 @@ if df_players is not None:
           filtered_df["def_contrib_per_90"] >= min_def_contrib
       ]
     if min_bonus > 0:
-      filtered_df = filtered_df[
-          filtered_df["bonus_per_90"] >= min_bonus
-      ]  # bonus rate fallback
-    if min_bps > 0:
       filtered_df = filtered_df[filtered_df["bps_per_90"] >= min_bps]
 
   # Clean up display names and columns
@@ -312,10 +387,11 @@ if df_players is not None:
       "total_points",
       "points_per_90",
       "expected_goal_involvements",
-      "xgi_per_90",
+      "shots_in_the_box",
+      "key_passes",
+      "touches_in_penalty_area",
       "defensive_contributions",
       "bonus",
-      "bps_per_90",
       "minutes",
       "form",
       "selected_by_percent",
@@ -338,10 +414,11 @@ if df_players is not None:
                 "total_points": "Points",
                 "points_per_90": "Pts/90",
                 "expected_goal_involvements": "xGI",
-                "xgi_per_90": "xGI/90",
+                "shots_in_the_box": "Shots in Box",
+                "key_passes": "Key Passes",
+                "touches_in_penalty_area": "Box Touches",
                 "defensive_contributions": "Def Contrib",
                 "bonus": "Bonus",
-                "bps_per_90": "BPS/90",
                 "minutes": "Mins",
                 "selected_by_percent": "Ownership %",
             }
