@@ -66,6 +66,14 @@ def load_fpl_data():
 
   players["next_5_fdr"] = players["team"].map(team_fdr_map)
 
+  # Ensure defensive_contributions column exists safely
+  if "defensive_contributions" not in players.columns:
+    players["defensive_contributions"] = 0
+  else:
+    players["defensive_contributions"] = players[
+        "defensive_contributions"
+    ].fillna(0)
+
   numeric_cols = [
       "now_cost",
       "total_points",
@@ -81,6 +89,7 @@ def load_fpl_data():
       "next_5_fdr",
       "bps",
       "bonus",
+      "defensive_contributions",
   ]
   for col in numeric_cols:
     if col in players.columns:
@@ -109,6 +118,9 @@ def load_fpl_data():
   )
   players["xgi_per_90"] = players.apply(
       lambda r: calc_per_90(r, "expected_goal_involvements"), axis=1
+  )
+  players["def_contrib_per_90"] = players.apply(
+      lambda r: calc_per_90(r, "defensive_contributions"), axis=1
   )
 
   return players, data
@@ -157,22 +169,19 @@ if df_players is not None:
         "Min Influence", min_value=0.0, value=0.0, step=10.0
     )
     min_threat = st.sidebar.number_input(
-        "Min Threat (Goal involvement proxy)",
-        min_value=0.0,
-        value=0.0,
-        step=10.0,
+        "Min Threat", min_value=0.0, value=0.0, step=10.0
     )
     min_creativity = st.sidebar.number_input(
-        "Min Creativity (Chance creation proxy)",
-        min_value=0.0,
-        value=0.0,
-        step=10.0,
+        "Min Creativity", min_value=0.0, value=0.0, step=10.0
     )
     min_xgi = st.sidebar.number_input(
         "Min Expected Goal Involvements (xGI)",
         min_value=0.0,
         value=0.0,
         step=0.05,
+    )
+    min_def_contrib = st.sidebar.number_input(
+        "Min Defensive Contributions", min_value=0, value=0, step=5
     )
     min_form = st.sidebar.number_input(
         "Min Form", min_value=0.0, value=0.0, step=0.5
@@ -191,6 +200,9 @@ if df_players is not None:
     )
     min_xgi = st.sidebar.number_input(
         "Min xGI Per 90", min_value=0.0, value=0.0, step=0.05
+    )
+    min_def_contrib = st.sidebar.number_input(
+        "Min Def Contrib Per 90", min_value=0.0, value=0.0, step=1.0
     )
     min_form = st.sidebar.number_input(
         "Min Form", min_value=0.0, value=0.0, step=0.5
@@ -227,6 +239,10 @@ if df_players is not None:
       filtered_df = filtered_df[
           filtered_df["expected_goal_involvements"] >= min_xgi
       ]
+    if min_def_contrib > 0:
+      filtered_df = filtered_df[
+          filtered_df["defensive_contributions"] >= min_def_contrib
+      ]
     if min_bonus > 0:
       filtered_df = filtered_df[filtered_df["bonus"] >= min_bonus]
     if min_bps > 0:
@@ -244,6 +260,10 @@ if df_players is not None:
       ]
     if min_xgi > 0:
       filtered_df = filtered_df[filtered_df["xgi_per_90"] >= min_xgi]
+    if min_def_contrib > 0:
+      filtered_df = filtered_df[
+          filtered_df["def_contrib_per_90"] >= min_def_contrib
+      ]
     if min_bonus > 0:
       filtered_df = filtered_df[filtered_df["bps_per_90"] >= min_bonus]
 
@@ -261,6 +281,7 @@ if df_players is not None:
       "total_points",
       "points_per_90",
       "expected_goal_involvements",
+      "defensive_contributions",
       "threat",
       "creativity",
       "influence",
@@ -288,6 +309,7 @@ if df_players is not None:
                 "total_points": "Points",
                 "points_per_90": "Pts/90",
                 "expected_goal_involvements": "xGI",
+                "defensive_contributions": "Def Contrib",
                 "threat": "Threat",
                 "creativity": "Creativity",
                 "influence": "Influence",
