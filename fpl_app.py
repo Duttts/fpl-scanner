@@ -9,8 +9,8 @@ st.set_page_config(
 
 st.title("⚽ FPL Custom Signal & Threshold Scanner")
 st.markdown(
-    "Filter live Fantasy Premier League data dynamically. Set a threshold only"
-    " when you want to filter."
+    "Filter live Fantasy Premier League data dynamically using official FPL"
+    " stats & expected data."
 )
 
 
@@ -42,7 +42,7 @@ def load_fpl_data():
 
   players["now_cost"] = players["now_cost"] / 10.0
 
-  # Calculate Next 5 Fixture Difficulty Rating (FDR) for each team
+  # Calculate Next 5 Fixture Difficulty Rating (FDR)
   team_fdr_map = {}
   for team_id in teams_df["id"]:
     team_fixtures = [
@@ -62,30 +62,9 @@ def load_fpl_data():
           difficulties.append(f["team_a_difficulty"])
       team_fdr_map[team_id] = round(sum(difficulties) / len(difficulties), 2)
     else:
-      team_fdr_map[team_id] = 3.0  # Fallback neutral average
+      team_fdr_map[team_id] = 3.0
 
   players["next_5_fdr"] = players["team"].map(team_fdr_map)
-
-  # Ensure defensive_contributions column exists safely
-  if "defensive_contributions" not in players.columns:
-    players["defensive_contributions"] = 0
-  else:
-    players["defensive_contributions"] = players[
-        "defensive_contributions"
-    ].fillna(0)
-
-  # Ensure advanced tracking stats exist safely in raw payload
-  advanced_cols_check = [
-      "shots",
-      "shots_in_the_box",
-      "key_passes",
-      "touches_in_penalty_area",
-  ]
-  for col in advanced_cols_check:
-    if col not in players.columns:
-      players[col] = 0
-    else:
-      players[col] = players[col].fillna(0)
 
   numeric_cols = [
       "now_cost",
@@ -102,15 +81,10 @@ def load_fpl_data():
       "next_5_fdr",
       "bps",
       "bonus",
-      "defensive_contributions",
-      "shots",
-      "shots_in_the_box",
-      "key_passes",
-      "touches_in_penalty_area",
   ]
   for col in numeric_cols:
     if col in players.columns:
-      players[col] = pd.to_numeric(players[col], errors="coerce")
+      players[col] = pd.to_numeric(players[col], errors="coerce").fillna(0)
 
   # --- CALCULATE RATES PER 90 ---
   def calc_per_90(row, col_name):
@@ -123,9 +97,7 @@ def load_fpl_data():
   players["points_per_90"] = players.apply(
       lambda r: calc_per_90(r, "total_points"), axis=1
   )
-  players["bps_per_90"] = players.apply(
-      lambda r: calc_per_90(r, "bps"), axis=1
-  )
+  players["bps_per_90"] = players.apply(lambda r: calc_per_90(r, "bps"), axis=1)
   players["influence_per_90"] = players.apply(
       lambda r: calc_per_90(r, "influence"), axis=1
   )
@@ -138,21 +110,6 @@ def load_fpl_data():
   players["xgi_per_90"] = players.apply(
       lambda r: calc_per_90(r, "expected_goal_involvements"), axis=1
   )
-  players["def_contrib_per_90"] = players.apply(
-      lambda r: calc_per_90(r, "defensive_contributions"), axis=1
-  )
-  players["shots_per_90"] = players.apply(
-      lambda r: calc_per_90(r, "shots"), axis=1
-  )
-  players["shots_in_box_per_90"] = players.apply(
-      lambda r: calc_per_90(r, "shots_in_the_box"), axis=1
-  )
-  players["key_passes_per_90"] = players.apply(
-      lambda r: calc_per_90(r, "key_passes"), axis=1
-  )
-  players["touches_in_box_per_90"] = players.apply(
-      lambda r: calc_per_90(r, "touches_in_penalty_area"), axis=1
-  )
 
   return players, data
 
@@ -164,11 +121,9 @@ if df_players is not None:
   # --- 3. SIDEBAR CONTROL PANEL ---
   st.sidebar.header("🔍 Filter Parameters")
 
-  # Position Filter
   positions = ["All"] + list(df_players["position"].unique())
   selected_position = st.sidebar.selectbox("Position", positions)
 
-  # Max Price Slider
   min_p, max_p = (
       float(df_players["now_cost"].min()),
       float(df_players["now_cost"].max()),
@@ -180,7 +135,6 @@ if df_players is not None:
   st.sidebar.markdown("---")
   st.sidebar.subheader("Fixture & Threshold Filters")
 
-  # Max Next 5 Fixture Difficulty Slider (Lower = Easier fixtures)
   max_fdr = st.sidebar.slider(
       "Max Next 5 Fixture Difficulty (FDR)",
       min_value=1.0,
@@ -188,23 +142,13 @@ if df_players is not None:
       value=5.0,
       step=0.1,
   )
-  st.sidebar.markdown(
-      "*(Lower FDR means easier upcoming games. 1=Very Easy, 5=Very Hard)*"
-  )
-
-  st.sidebar.markdown("---")
   min_minutes = st.sidebar.number_input(
       "Min Minutes Played", min_value=0, value=0, step=90
   )
 
-  # --- TOGGLE FOR TOTALS VS PER 90 ---
   metric_mode = st.sidebar.radio(
       "Filter Threshold Mode",
       options=["Total Accumulation", "Per 90 Rates"],
-      help=(
-          "Switch between filtering by total recorded stats or normalized"
-          " per-90 rates."
-      ),
   )
 
   st.sidebar.markdown("---")
@@ -213,10 +157,16 @@ if df_players is not None:
         "Min Influence", min_value=0.0, value=0.0, step=10.0
     )
     min_threat = st.sidebar.number_input(
-        "Min Threat", min_value=0.0, value=0.0, step=10.0
+        "Min Threat (Goal involvement proxy)",
+        min_value=0.0,
+        value=0.0,
+        step=10.0,
     )
     min_creativity = st.sidebar.number_input(
-        "Min Creativity", min_value=0.0, value=0.0, step=10.0
+        "Min Creativity (Chance creation proxy)",
+        min_value=0.0,
+        value=0.0,
+        step=10.0,
     )
     min_xgi = st.sidebar.number_input(
         "Min Expected Goal Involvements (xGI)",
@@ -224,30 +174,11 @@ if df_players is not None:
         value=0.0,
         step=0.05,
     )
-    min_shots = st.sidebar.number_input(
-        "Min Total Shots", min_value=0, value=0, step=2
-    )
-    min_shots_box = st.sidebar.number_input(
-        "Min Shots in the Box", min_value=0, value=0, step=2
-    )
-    min_key_passes = st.sidebar.number_input(
-        "Min Key Passes", min_value=0, value=0, step=2
-    )
-    min_touches_box = st.sidebar.number_input(
-        "Min Touches in Box", min_value=0, value=0, step=5
-    )
     min_form = st.sidebar.number_input(
-        "Min Form (Last 30 Days)", min_value=0.0, value=0.0, step=0.5
+        "Min Form", min_value=0.0, value=0.0, step=0.5
     )
-    min_def_contrib = st.sidebar.number_input(
-        "Min Defensive Contributions", min_value=0, value=0, step=5
-    )
-    min_bonus = st.sidebar.number_input(
-        "Min Bonus Points Accumulated", min_value=0, value=0, step=1
-    )
-    min_bps = st.sidebar.number_input(
-        "Min Total BPS (Bonus System)", min_value=0, value=0, step=25
-    )
+    min_bonus = st.sidebar.number_input("Min Bonus Points", min_value=0, value=0)
+    min_bps = st.sidebar.number_input("Min Total BPS", min_value=0, value=0)
   else:
     min_influence = st.sidebar.number_input(
         "Min Influence Per 90", min_value=0.0, value=0.0, step=5.0
@@ -261,23 +192,8 @@ if df_players is not None:
     min_xgi = st.sidebar.number_input(
         "Min xGI Per 90", min_value=0.0, value=0.0, step=0.05
     )
-    min_shots = st.sidebar.number_input(
-        "Min Shots Per 90", min_value=0.0, value=0.0, step=0.5
-    )
-    min_shots_box = st.sidebar.number_input(
-        "Min Shots in Box Per 90", min_value=0.0, value=0.0, step=0.5
-    )
-    min_key_passes = st.sidebar.number_input(
-        "Min Key Passes Per 90", min_value=0.0, value=0.0, step=0.5
-    )
-    min_touches_box = st.sidebar.number_input(
-        "Min Touches in Box Per 90", min_value=0.0, value=0.0, step=1.0
-    )
     min_form = st.sidebar.number_input(
-        "Min Form (Last 30 Days)", min_value=0.0, value=0.0, step=0.5
-    )
-    min_def_contrib = st.sidebar.number_input(
-        "Min Def Contrib Per 90", min_value=0.0, value=0.0, step=1.0
+        "Min Form", min_value=0.0, value=0.0, step=0.5
     )
     min_bonus = st.sidebar.number_input(
         "Min Bonus Per 90", min_value=0.0, value=0.0, step=0.1
@@ -286,28 +202,20 @@ if df_players is not None:
         "Min BPS Per 90", min_value=0.0, value=0.0, step=5.0
     )
 
-  # --- 4. APPLY CONDITIONAL LOGIC & FILTERING ---
+  # --- 4. APPLY FILTERING ---
   filtered_df = df_players.copy()
 
-  # Apply Position Filter
   if selected_position != "All":
     filtered_df = filtered_df[filtered_df["position"] == selected_position]
 
-  # Apply Price Filter
   filtered_df = filtered_df[filtered_df["now_cost"] <= max_price]
-
-  # Apply Fixture Difficulty Filter (Keep teams with FDR <= chosen max)
   filtered_df = filtered_df[filtered_df["next_5_fdr"] <= max_fdr]
 
-  # Apply Minutes Filter
   if min_minutes > 0:
     filtered_df = filtered_df[filtered_df["minutes"] >= min_minutes]
-
-  # Apply Form Filter universally (since FPL form is independent of mode totals/rates)
   if min_form > 0:
     filtered_df = filtered_df[filtered_df["form"] >= min_form]
 
-  # Apply Threshold Filters dynamically based on selected mode
   if metric_mode == "Total Accumulation":
     if min_influence > 0:
       filtered_df = filtered_df[filtered_df["influence"] >= min_influence]
@@ -318,22 +226,6 @@ if df_players is not None:
     if min_xgi > 0:
       filtered_df = filtered_df[
           filtered_df["expected_goal_involvements"] >= min_xgi
-      ]
-    if min_shots > 0:
-      filtered_df = filtered_df[filtered_df["shots"] >= min_shots]
-    if min_shots_box > 0:
-      filtered_df = filtered_df[
-          filtered_df["shots_in_the_box"] >= min_shots_box
-      ]
-    if min_key_passes > 0:
-      filtered_df = filtered_df[filtered_df["key_passes"] >= min_key_passes]
-    if min_touches_box > 0:
-      filtered_df = filtered_df[
-          filtered_df["touches_in_penalty_area"] >= min_touches_box
-      ]
-    if min_def_contrib > 0:
-      filtered_df = filtered_df[
-          filtered_df["defensive_contributions"] >= min_def_contrib
       ]
     if min_bonus > 0:
       filtered_df = filtered_df[filtered_df["bonus"] >= min_bonus]
@@ -352,28 +244,9 @@ if df_players is not None:
       ]
     if min_xgi > 0:
       filtered_df = filtered_df[filtered_df["xgi_per_90"] >= min_xgi]
-    if min_shots > 0:
-      filtered_df = filtered_df[filtered_df["shots_per_90"] >= min_shots]
-    if min_shots_box > 0:
-      filtered_df = filtered_df[
-          filtered_df["shots_in_box_per_90"] >= min_shots_box
-      ]
-    if min_key_passes > 0:
-      filtered_df = filtered_df[
-          filtered_df["key_passes_per_90"] >= min_key_passes
-      ]
-    if min_touches_box > 0:
-      filtered_df = filtered_df[
-          filtered_df["touches_in_box_per_90"] >= min_touches_box
-      ]
-    if min_def_contrib > 0:
-      filtered_df = filtered_df[
-          filtered_df["def_contrib_per_90"] >= min_def_contrib
-      ]
     if min_bonus > 0:
-      filtered_df = filtered_df[filtered_df["bps_per_90"] >= min_bps]
+      filtered_df = filtered_df[filtered_df["bps_per_90"] >= min_bonus]
 
-  # Clean up display names and columns
   filtered_df["Player"] = (
       filtered_df["first_name"] + " " + filtered_df["second_name"]
   )
@@ -388,21 +261,19 @@ if df_players is not None:
       "total_points",
       "points_per_90",
       "expected_goal_involvements",
-      "shots_in_the_box",
-      "key_passes",
-      "touches_in_penalty_area",
-      "defensive_contributions",
+      "threat",
+      "creativity",
+      "influence",
       "bonus",
       "minutes",
       "selected_by_percent",
   ]
 
-  # Sort by form and total points descending by default
   filtered_df = filtered_df.sort_values(
       by=["form", "total_points"], ascending=[False, False]
   )
 
-  # --- 5. RENDER RESULTS ON SCREEN ---
+  # --- 5. RENDER RESULTS ---
   st.subheader(f"Matching Shortlist ({len(filtered_df)} players found)")
 
   if not filtered_df.empty:
@@ -417,10 +288,9 @@ if df_players is not None:
                 "total_points": "Points",
                 "points_per_90": "Pts/90",
                 "expected_goal_involvements": "xGI",
-                "shots_in_the_box": "Shots in Box",
-                "key_passes": "Key Passes",
-                "touches_in_penalty_area": "Box Touches",
-                "defensive_contributions": "Def Contrib",
+                "threat": "Threat",
+                "creativity": "Creativity",
+                "influence": "Influence",
                 "bonus": "Bonus",
                 "minutes": "Mins",
                 "selected_by_percent": "Ownership %",
@@ -431,5 +301,5 @@ if df_players is not None:
   else:
     st.warning(
         "No players match this exact combination of filters. Try loosening"
-        " your fixture difficulty slider or thresholds."
+        " your thresholds."
     )
