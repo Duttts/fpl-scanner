@@ -42,102 +42,12 @@ def load_fpl_data():
 
   players["now_cost"] = players["now_cost"] / 10.0
 
-  # Calculate Next 5 Fixture Difficulty Rating (FDR)
-  team_fdr_map = {}
-  for team_id in teams_df["id"]:
-    team_fixtures = [
-        f
-        for f in fixtures
-        if (f["team_h"] == team_id or f["team_a"] == team_id)
-        and not f["finished"]
-    ]
-    next_5 = team_fixtures[:5]
-
-    if next_5:
-      difficulties = []
-      for f in next_5:
-        if f["team_h"] == team_id:
-          difficulties.append(f["team_h_difficulty"])
-        else:
-          difficulties.append(f["team_a_difficulty"])
-      team_fdr_map[team_id] = round(sum(difficulties) / len(difficulties), 2)
-    else:
-      team_fdr_map[team_id] = 3.0
-
-  players["next_5_fdr"] = players["team"].map(team_fdr_map)
-
-  # Safe parsing for defensive contributions / defensive stats key checks
-  def_col_candidates = [
-      "defensive_contributions",
-      "clearances_blocks_interceptions",
-  ]
-  found_def_col = None
-  for col in def_col_candidates:
-    if col in players.columns:
-      found_def_col = col
-      break
-
-  if found_def_col:
-    players["defensive_contributions"] = pd.to_numeric(
-        players[found_def_col], errors="coerce"
-    ).fillna(0)
-  else:
-    players["defensive_contributions"] = 0
-
-  numeric_cols = [
-      "now_cost",
-      "total_points",
-      "influence",
-      "threat",
-      "creativity",
-      "selected_by_percent",
-      "form",
-      "expected_goals",
-      "expected_assists",
-      "expected_goal_involvements",
-      "minutes",
-      "next_5_fdr",
-      "bps",
-      "bonus",
-      "defensive_contributions",
-  ]
-  for col in numeric_cols:
-    if col in players.columns:
-      players[col] = pd.to_numeric(players[col], errors="coerce").fillna(0)
-
-  # --- CALCULATE RATES PER 90 ---
-  def calc_per_90(row, col_name):
-    return (
-        round((row[col_name] / row["minutes"]) * 90, 2)
-        if row["minutes"] > 0
-        else 0.0
-    )
-
-  players["points_per_90"] = players.apply(
-      lambda r: calc_per_90(r, "total_points"), axis=1
-  )
-  players["bps_per_90"] = players.apply(lambda r: calc_per_90(r, "bps"), axis=1)
-  players["influence_per_90"] = players.apply(
-      lambda r: calc_per_90(r, "influence"), axis=1
-  )
-  players["threat_per_90"] = players.apply(
-      lambda r: calc_per_90(r, "threat"), axis=1
-  )
-  players["creativity_per_90"] = players.apply(
-      lambda r: calc_per_90(r, "creativity"), axis=1
-  )
-  players["xgi_per_90"] = players.apply(
-      lambda r: calc_per_90(r, "expected_goal_involvements"), axis=1
-  )
-  players["def_contrib_per_90"] = players.apply(
-      lambda r: calc_per_90(r, "defensive_contributions"), axis=1
-  )
-
-  return players, data
+  # Store raw fixtures and teams data in cache return for dynamic horizon calculation
+  return players, fixtures, teams_df, data
 
 
 with st.spinner("Connecting to live FPL data & fixture feed..."):
-  df_players, raw_data = load_fpl_data()
+  df_players, fixtures, teams_df, raw_data = load_fpl_data()
 
 if df_players is not None:
   # --- 3. SIDEBAR CONTROL PANEL ---
@@ -157,8 +67,41 @@ if df_players is not None:
   st.sidebar.markdown("---")
   st.sidebar.subheader("Fixture & Threshold Filters")
 
+  # --- NEW: Fixture Horizon Slider (1 to 10 games) ---
+  fixture_horizon = st.sidebar.slider(
+      "Fixture Horizon (Next X Games)",
+      min_value=1,
+      max_value=10,
+      value=5,
+      step=1,
+  )
+
+  # Dynamically calculate FDR based on the selected horizon slider
+  team_fdr_map = {}
+  for team_id in teams_df["id"]:
+    team_fixtures = [
+        f
+        for f in fixtures
+        if (f["team_h"] == team_id or f["team_a"] == team_id)
+        and not f["finished"]
+    ]
+    next_fixtures = team_fixtures[:fixture_horizon]
+
+    if next_fixtures:
+      difficulties = []
+      for f in next_fixtures:
+        if f["team_h"] == team_id:
+          difficulties.append(f["team_h_difficulty"])
+        else:
+          difficulties.append(f["team_a_difficulty"])
+      team_fdr_map[team_id] = round(sum(difficulties) / len(difficulties), 2)
+    else:
+      team_fdr_map[team_id] = 3.0
+
+  df_players["dynamic_fdr"] = df_players["team"].map(team_fdr_map)
+
   max_fdr = st.sidebar.slider(
-      "Max Next 5 Fixture Difficulty (FDR)",
+      f"Max Next {fixture_horizon} Fixture Difficulty (FDR)",
       min_value=1.0,
       max_value=5.0,
       value=5.0,
@@ -224,6 +167,77 @@ if df_players is not None:
         "Min BPS Per 90", min_value=0.0, value=0.0, step=5.0
     )
 
+  # Safe parsing for defensive contributions / defensive stats key checks
+  def_col_candidates = [
+      "defensive_contributions",
+      "clearances_blocks_interceptions",
+  ]
+  found_def_col = None
+  for col in def_col_candidates:
+    if col in df_players.columns:
+      found_def_col = col
+      break
+
+  if found_def_col:
+    df_players["defensive_contributions"] = pd.to_numeric(
+        df_players[found_def_col], errors="coerce"
+    ).fillna(0)
+  else:
+    df_players["defensive_contributions"] = 0
+
+  numeric_cols = [
+      "now_cost",
+      "total_points",
+      "influence",
+      "threat",
+      "creativity",
+      "selected_by_percent",
+      "form",
+      "expected_goals",
+      "expected_assists",
+      "expected_goal_involvements",
+      "minutes",
+      "dynamic_fdr",
+      "bps",
+      "bonus",
+      "defensive_contributions",
+  ]
+  for col in numeric_cols:
+    if col in df_players.columns:
+      df_players[col] = pd.to_numeric(df_players[col], errors="coerce").fillna(
+          0
+      )
+
+  # --- CALCULATE RATES PER 90 ---
+  def calc_per_90(row, col_name):
+    return (
+        round((row[col_name] / row["minutes"]) * 90, 2)
+        if row["minutes"] > 0
+        else 0.0
+    )
+
+  df_players["points_per_90"] = df_players.apply(
+      lambda r: calc_per_90(r, "total_points"), axis=1
+  )
+  df_players["bps_per_90"] = df_players.apply(
+      lambda r: calc_per_90(r, "bps"), axis=1
+  )
+  df_players["influence_per_90"] = df_players.apply(
+      lambda r: calc_per_90(r, "influence"), axis=1
+  )
+  df_players["threat_per_90"] = df_players.apply(
+      lambda r: calc_per_90(r, "threat"), axis=1
+  )
+  df_players["creativity_per_90"] = df_players.apply(
+      lambda r: calc_per_90(r, "creativity"), axis=1
+  )
+  df_players["xgi_per_90"] = df_players.apply(
+      lambda r: calc_per_90(r, "expected_goal_involvements"), axis=1
+  )
+  df_players["def_contrib_per_90"] = df_players.apply(
+      lambda r: calc_per_90(r, "defensive_contributions"), axis=1
+  )
+
   # --- 4. APPLY FILTERING ---
   filtered_df = df_players.copy()
 
@@ -231,7 +245,7 @@ if df_players is not None:
     filtered_df = filtered_df[filtered_df["position"] == selected_position]
 
   filtered_df = filtered_df[filtered_df["now_cost"] <= max_price]
-  filtered_df = filtered_df[filtered_df["next_5_fdr"] <= max_fdr]
+  filtered_df = filtered_df[filtered_df["dynamic_fdr"] <= max_fdr]
 
   if min_minutes > 0:
     filtered_df = filtered_df[filtered_df["minutes"] >= min_minutes]
@@ -286,7 +300,7 @@ if df_players is not None:
       "team_name",
       "position",
       "now_cost",
-      "next_5_fdr",
+      "dynamic_fdr",
       "form",
       "total_points",
       "points_per_90",
@@ -314,7 +328,7 @@ if df_players is not None:
                 "team_name": "Team",
                 "position": "Pos",
                 "now_cost": "Price (£m)",
-                "next_5_fdr": "Next 5 FDR",
+                "dynamic_fdr": f"Next {fixture_horizon} FDR",
                 "form": "Form",
                 "total_points": "Points",
                 "points_per_90": "Pts/90",
