@@ -145,7 +145,6 @@ if df_players is not None:
         st.success(f"Loaded preset: {selected_preset}")
         st.rerun()
 
-    # Use a unique key for the text input so we can clear/reset it properly
     new_preset_name = st.text_input("New Preset Name", key="input_preset_name")
 
     if st.button("Save Current Filters as Preset"):
@@ -182,14 +181,10 @@ if df_players is not None:
         except Exception as e:
           st.warning(f"Could not write preset to disk: {e}")
 
-        # Clear the text input state so it doesn't accidentally overwrite next time
-        st.session_state["input_preset_name"] = ""
-
         st.success(f"Preset '{preset_key}' saved successfully!")
         st.rerun()
       else:
         st.warning("Please enter a valid name for the preset.")
-
   p_data = st.session_state.get("loaded_preset_data", {})
 
   # --- NEW: Data Scope Toggle (Season Totals vs Last X Gameweeks) ---
