@@ -116,9 +116,19 @@ if df_players is not None:
   # --- 3. SIDEBAR CONTROL PANEL ---
   st.sidebar.header("🔍 Filter Parameters")
 
-  # --- NEW: Session State Initialization for Presets ---
+  import os
+
+  # Load persistent presets from file on startup if not already loaded
+  PRESET_FILE = "fpl_presets.json"
   if "fpl_presets" not in st.session_state:
-    st.session_state["fpl_presets"] = {}
+    if os.path.exists(PRESET_FILE):
+      try:
+        with open(PRESET_FILE, "r") as f:
+          st.session_state["fpl_presets"] = json.load(f)
+      except:
+        st.session_state["fpl_presets"] = {}
+    else:
+      st.session_state["fpl_presets"] = {}
 
   # Preset Manager UI block
   with st.sidebar.expander("💾 Filter Presets Manager", expanded=False):
@@ -135,9 +145,12 @@ if df_players is not None:
         st.success(f"Loaded preset: {selected_preset}")
         st.rerun()
 
-    new_preset_name = st.text_input("New Preset Name")
+    # Use a unique key for the text input so we can clear/reset it properly
+    new_preset_name = st.text_input("New Preset Name", key="input_preset_name")
+
     if st.button("Save Current Filters as Preset"):
-      if new_preset_name.strip():
+      preset_key = new_preset_name.strip()
+      if preset_key:
         current_state = {
             "data_scope": locals().get("data_scope", "Season Totals"),
             "rolling_window_size": locals().get("rolling_window_size", 5),
@@ -158,9 +171,22 @@ if df_players is not None:
             "min_bonus": locals().get("min_bonus", 0),
             "min_bps": locals().get("min_bps", 0),
         }
-        st.session_state["fpl_presets"][new_preset_name.strip()] = current_state
-        st.success(f"Preset '{new_preset_name.strip()}' saved successfully!")
-        st.rerun()  # <--- Forces Streamlit to instantly refresh and show it in the dropdown!
+
+        # Save to session state
+        st.session_state["fpl_presets"][preset_key] = current_state
+
+        # Save to local JSON file so it persists across app restarts
+        try:
+          with open(PRESET_FILE, "w") as f:
+            json.dump(st.session_state["fpl_presets"], f)
+        except Exception as e:
+          st.warning(f"Could not write preset to disk: {e}")
+
+        # Clear the text input state so it doesn't accidentally overwrite next time
+        st.session_state["input_preset_name"] = ""
+
+        st.success(f"Preset '{preset_key}' saved successfully!")
+        st.rerun()
       else:
         st.warning("Please enter a valid name for the preset.")
 
