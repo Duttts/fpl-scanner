@@ -42,7 +42,6 @@ def load_fpl_data():
 
   players["now_cost"] = players["now_cost"] / 10.0
 
-  # Store raw fixtures and teams data in cache return for dynamic horizon calculation
   return players, fixtures, teams_df, data
 
 
@@ -67,7 +66,7 @@ if df_players is not None:
   st.sidebar.markdown("---")
   st.sidebar.subheader("Fixture & Threshold Filters")
 
-  # --- NEW: Fixture Horizon Slider (1 to 10 games) ---
+  # Fixture Horizon Slider (1 to 10 games)
   fixture_horizon = st.sidebar.slider(
       "Fixture Horizon (Next X Games)",
       min_value=1,
@@ -346,6 +345,6 @@ if df_players is not None:
     )
   else:
     st.warning(
-        "No players match this exact combination of filters. Try loosening"
-        " your thresholds."
+        "No players match this exact combination of filters. Try loosening your"
+        " thresholds."
     )
