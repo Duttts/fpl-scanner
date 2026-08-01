@@ -138,12 +138,13 @@ if df_players is not None:
     new_preset_name = st.text_input("New Preset Name")
     if st.button("Save Current Filters as Preset"):
       if new_preset_name.strip():
-        # Capture current inputs contextually
         current_state = {
             "data_scope": locals().get("data_scope", "Season Totals"),
             "rolling_window_size": locals().get("rolling_window_size", 5),
             "selected_position": locals().get("selected_position", "All"),
-            "max_price": locals().get("max_price", float(df_players["now_cost"].max())),
+            "max_price": locals().get(
+                "max_price", float(df_players["now_cost"].max())
+            ),
             "fixture_horizon": locals().get("fixture_horizon", 5),
             "max_fdr": locals().get("max_fdr", 5.0),
             "min_minutes": locals().get("min_minutes", 0),
@@ -159,6 +160,7 @@ if df_players is not None:
         }
         st.session_state["fpl_presets"][new_preset_name.strip()] = current_state
         st.success(f"Preset '{new_preset_name.strip()}' saved successfully!")
+        st.rerun()  # <--- Forces Streamlit to instantly refresh and show it in the dropdown!
       else:
         st.warning("Please enter a valid name for the preset.")
 
