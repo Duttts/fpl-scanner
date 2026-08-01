@@ -48,9 +48,82 @@ def load_fpl_data():
 with st.spinner("Connecting to live FPL data & fixture feed..."):
   df_players, fixtures, teams_df, raw_data = load_fpl_data()
 
+
+# Helper function to fetch rolling last-X-games data if requested
+@st.cache_data(ttl=3600)
+def fetch_rolling_data(player_ids, num_games=5):
+  rolling_records = []
+  for pid in player_ids:
+    try:
+      r = requests.get(
+          f"https://fantasy.premierleague.com/api/element-summary/{pid}/"
+      )
+      if r.status_code == 200:
+        history = r.json().get("history", [])
+        if history:
+          recent_games = history[-num_games:]
+          sum_mins = sum(int(g.get("minutes", 0) or 0) for g in recent_games)
+          sum_xg = sum(
+              float(g.get("expected_goals", 0) or 0) for g in recent_games
+          )
+          sum_xa = sum(
+              float(g.get("expected_assists", 0) or 0) for g in recent_games
+          )
+          sum_inf = sum(float(g.get("influence", 0) or 0) for g in recent_games)
+          sum_creat = sum(
+              float(g.get("creativity", 0) or 0) for g in recent_games
+          )
+          sum_threat = sum(float(g.get("threat", 0) or 0) for g in recent_games)
+          sum_pts = sum(int(g.get("total_points", 0) or 0) for g in recent_games)
+          sum_bps = sum(int(g.get("bps", 0) or 0) for g in recent_games)
+          sum_bonus = sum(int(g.get("bonus", 0) or 0) for g in recent_games)
+
+          # Safe lookup for defensive contributions in historical logs if present
+          sum_def = 0
+          for g in recent_games:
+            for def_key in [
+                "defensive_contributions",
+                "clearances_blocks_interceptions",
+            ]:
+              if def_key in g:
+                sum_def += int(g.get(def_key, 0) or 0)
+                break
+
+          rolling_records.append({
+              "id": pid,
+              "minutes": sum_mins,
+              "total_points": sum_pts,
+              "expected_goals": sum_xg,
+              "expected_assists": sum_xa,
+              "expected_goal_involvements": sum_xg + sum_xa,
+              "influence": sum_inf,
+              "creativity": sum_creat,
+              "threat": sum_threat,
+              "bps": sum_bps,
+              "bonus": sum_bonus,
+              "defensive_contributions": sum_def,
+          })
+    except:
+      continue
+
+  if rolling_records:
+    return pd.DataFrame(rolling_records)
+  return pd.DataFrame()
+
+
 if df_players is not None:
   # --- 3. SIDEBAR CONTROL PANEL ---
   st.sidebar.header("🔍 Filter Parameters")
+
+  # --- NEW: Data Scope Toggle (Season Totals vs Last X Gameweeks) ---
+  data_scope = st.sidebar.radio(
+      "Data Scope", options=["Season Totals", "Last X Gameweeks"]
+  )
+  rolling_window_size = 5
+  if data_scope == "Last X Gameweeks":
+    rolling_window_size = st.sidebar.slider(
+        "Gameweek Window Size", min_value=1, max_value=10, value=5, step=1
+    )
 
   positions = ["All"] + list(df_players["position"].unique())
   selected_position = st.sidebar.selectbox("Position", positions)
@@ -206,6 +279,32 @@ if df_players is not None:
       df_players[col] = pd.to_numeric(df_players[col], errors="coerce").fillna(
           0
       )
+
+  # Apply rolling window swap if user selected Last X Gameweeks
+  if data_scope == "Last X Gameweeks":
+    with st.spinner(f"Fetching last {rolling_window_size} gameweeks data..."):
+      rolling_df = fetch_rolling_data(
+          df_players["id"].tolist(), num_games=rolling_window_size
+      )
+      if not rolling_df.empty:
+        df_players = df_players.merge(
+            rolling_df, on="id", how="left", suffixes=("", "_rolling")
+        )
+        for col in [
+            "minutes",
+            "total_points",
+            "expected_goals",
+            "expected_assists",
+            "expected_goal_involvements",
+            "influence",
+            "creativity",
+            "threat",
+            "bps",
+            "bonus",
+            "defensive_contributions",
+        ]:
+          if col + "_rolling" in df_players.columns:
+            df_players[col] = df_players[col + "_rolling"].fillna(0)
 
   # --- CALCULATE RATES PER 90 ---
   def calc_per_90(row, col_name):
