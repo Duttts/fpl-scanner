@@ -2,350 +2,500 @@ import pandas as pd
 import requests
 import streamlit as st
 
-# --- 1. PAGE CONFIGURATION ---
+# Set page layout to wide for your laptop workspace
 st.set_page_config(
-    page_title="FPL Dynamic Signal Scanner", page_icon="⚽", layout="wide"
+    page_title="Custom FPL Dashboard", page_icon="⚽", layout="wide"
 )
 
-st.title("⚽ FPL Custom Signal & Threshold Scanner")
-st.markdown(
-    "Filter live Fantasy Premier League data dynamically using official FPL"
-    " stats & expected data."
+st.title("⚽ Advanced FPL Strategy Dashboard")
+st.write(
+    "Welcome to your custom laptop command center. Fully loaded with position,"
+    " price, fixtures, minutes played (total & per 90), ICT metrics, xGI,"
+    " defensive contributions, form, bonus points, BPS, rolling windows, and"
+    " fully custom presets."
 )
 
 
-# --- 2. LOAD LIVE FPL & FIXTURE DATA ---
 @st.cache_data(ttl=3600)
 def load_fpl_data():
-  url_bootstrap = "https://fantasy.premierleague.com/api/bootstrap-static/"
-  url_fixtures = "https://fantasy.premierleague.com/api/fixtures/"
+  url = "https://fantasy.premierleague.com/api/bootstrap-static/"
+  response = requests.get(url)
+  data = response.json()
 
-  response_b = requests.get(url_bootstrap)
-  response_f = requests.get(url_fixtures)
-
-  if response_b.status_code != 200 or response_f.status_code != 200:
-    st.error("Failed to fetch live data from Fantasy Premier League API.")
-    return None, None
-
-  data = response_b.json()
-  fixtures = response_f.json()
-
-  players = pd.DataFrame(data["elements"])
+  players_df = pd.DataFrame(data["elements"])
   teams_df = pd.DataFrame(data["teams"])
-  element_types = pd.DataFrame(data["element_types"])
+  positions_df = pd.DataFrame(data["element_types"])
 
-  team_mapping = teams_df.set_index("id")["short_name"].to_dict()
-  players["team_name"] = players["team"].map(team_mapping)
+  team_mapping = teams_df.set_index("id")["name"].to_dict()
+  position_mapping = positions_df.set_index("id")["singular_name"].to_dict()
 
-  position_mapping = element_types.set_index("id")["singular_name"].to_dict()
-  players["position"] = players["element_type"].map(position_mapping)
+  players_df["team_name"] = players_df["team"].map(team_mapping)
+  players_df["position"] = players_df["element_type"].map(position_mapping)
 
-  players["now_cost"] = players["now_cost"] / 10.0
-
-  # Store raw fixtures and teams data in cache return for dynamic horizon calculation
-  return players, fixtures, teams_df, data
-
-
-with st.spinner("Connecting to live FPL data & fixture feed..."):
-  df_players, fixtures, teams_df, raw_data = load_fpl_data()
-
-if df_players is not None:
-  # --- 3. SIDEBAR CONTROL PANEL ---
-  st.sidebar.header("🔍 Filter Parameters")
-
-  positions = ["All"] + list(df_players["position"].unique())
-  selected_position = st.sidebar.selectbox("Position", positions)
-
-  min_p, max_p = (
-      float(df_players["now_cost"].min()),
-      float(df_players["now_cost"].max()),
-  )
-  max_price = st.sidebar.slider(
-      "Max Price (£m)", min_value=min_p, max_value=max_p, value=max_p, step=0.1
-  )
-
-  st.sidebar.markdown("---")
-  st.sidebar.subheader("Fixture & Threshold Filters")
-
-  # --- NEW: Fixture Horizon Slider (1 to 10 games) ---
-  fixture_horizon = st.sidebar.slider(
-      "Fixture Horizon (Next X Games)",
-      min_value=1,
-      max_value=10,
-      value=5,
-      step=1,
-  )
-
-  # Dynamically calculate FDR based on the selected horizon slider
-  team_fdr_map = {}
-  for team_id in teams_df["id"]:
-    team_fixtures = [
-        f
-        for f in fixtures
-        if (f["team_h"] == team_id or f["team_a"] == team_id)
-        and not f["finished"]
-    ]
-    next_fixtures = team_fixtures[:fixture_horizon]
-
-    if next_fixtures:
-      difficulties = []
-      for f in next_fixtures:
-        if f["team_h"] == team_id:
-          difficulties.append(f["team_h_difficulty"])
-        else:
-          difficulties.append(f["team_a_difficulty"])
-      team_fdr_map[team_id] = round(sum(difficulties) / len(difficulties), 2)
-    else:
-      team_fdr_map[team_id] = 3.0
-
-  df_players["dynamic_fdr"] = df_players["team"].map(team_fdr_map)
-
-  max_fdr = st.sidebar.slider(
-      f"Max Next {fixture_horizon} Fixture Difficulty (FDR)",
-      min_value=1.0,
-      max_value=5.0,
-      value=5.0,
-      step=0.1,
-  )
-  min_minutes = st.sidebar.number_input(
-      "Min Minutes Played", min_value=0, value=0, step=90
-  )
-
-  metric_mode = st.sidebar.radio(
-      "Filter Threshold Mode",
-      options=["Total Accumulation", "Per 90 Rates"],
-  )
-
-  st.sidebar.markdown("---")
-  if metric_mode == "Total Accumulation":
-    min_influence = st.sidebar.number_input(
-        "Min Influence", min_value=0.0, value=0.0, step=10.0
-    )
-    min_threat = st.sidebar.number_input(
-        "Min Threat", min_value=0.0, value=0.0, step=10.0
-    )
-    min_creativity = st.sidebar.number_input(
-        "Min Creativity", min_value=0.0, value=0.0, step=10.0
-    )
-    min_xgi = st.sidebar.number_input(
-        "Min Expected Goal Involvements (xGI)",
-        min_value=0.0,
-        value=0.0,
-        step=0.05,
-    )
-    min_def_contrib = st.sidebar.number_input(
-        "Min Defensive Contributions", min_value=0, value=0, step=5
-    )
-    min_form = st.sidebar.number_input(
-        "Min Form", min_value=0.0, value=0.0, step=0.5
-    )
-    min_bonus = st.sidebar.number_input("Min Bonus Points", min_value=0, value=0)
-    min_bps = st.sidebar.number_input("Min Total BPS", min_value=0, value=0)
-  else:
-    min_influence = st.sidebar.number_input(
-        "Min Influence Per 90", min_value=0.0, value=0.0, step=5.0
-    )
-    min_threat = st.sidebar.number_input(
-        "Min Threat Per 90", min_value=0.0, value=0.0, step=5.0
-    )
-    min_creativity = st.sidebar.number_input(
-        "Min Creativity Per 90", min_value=0.0, value=0.0, step=5.0
-    )
-    min_xgi = st.sidebar.number_input(
-        "Min xGI Per 90", min_value=0.0, value=0.0, step=0.05
-    )
-    min_def_contrib = st.sidebar.number_input(
-        "Min Def Contrib Per 90", min_value=0.0, value=0.0, step=1.0
-    )
-    min_form = st.sidebar.number_input(
-        "Min Form", min_value=0.0, value=0.0, step=0.5
-    )
-    min_bonus = st.sidebar.number_input(
-        "Min Bonus Per 90", min_value=0.0, value=0.0, step=0.1
-    )
-    min_bps = st.sidebar.number_input(
-        "Min BPS Per 90", min_value=0.0, value=0.0, step=5.0
-    )
-
-  # Safe parsing for defensive contributions / defensive stats key checks
-  def_col_candidates = [
-      "defensive_contributions",
-      "clearances_blocks_interceptions",
-  ]
-  found_def_col = None
-  for col in def_col_candidates:
-    if col in df_players.columns:
-      found_def_col = col
-      break
-
-  if found_def_col:
-    df_players["defensive_contributions"] = pd.to_numeric(
-        df_players[found_def_col], errors="coerce"
-    ).fillna(0)
-  else:
-    df_players["defensive_contributions"] = 0
-
+  # Convert columns cleanly and safely
+  players_df["now_cost"] = players_df["now_cost"] / 10.0
   numeric_cols = [
-      "now_cost",
+      "selected_by_percent",
       "total_points",
       "influence",
-      "threat",
       "creativity",
-      "selected_by_percent",
-      "form",
+      "threat",
       "expected_goals",
       "expected_assists",
-      "expected_goal_involvements",
+      "form",
       "minutes",
-      "dynamic_fdr",
       "bps",
       "bonus",
-      "defensive_contributions",
+      "clean_sheets",
+      "goals_conceded",
   ]
   for col in numeric_cols:
-    if col in df_players.columns:
-      df_players[col] = pd.to_numeric(df_players[col], errors="coerce").fillna(
+    if col in players_df.columns:
+      players_df[col] = pd.to_numeric(players_df[col], errors="coerce").fillna(
+          0.0
+      )
+    else:
+      players_df[col] = 0.0
+
+  # Calculate Expected Goal Involvements (xGI)
+  players_df["expected_goal_involvements"] = (
+      players_df["expected_goals"] + players_df["expected_assists"]
+  )
+
+  # Calculate Per 90 metrics (preventing division by zero)
+  players_df["minutes"] = players_df["minutes"].replace(0, 1)  # safe guard
+  players_df["influence_per_90"] = (
+      players_df["influence"] / players_df["minutes"]
+  ) * 90
+  players_df["threat_per_90"] = (
+      players_df["threat"] / players_df["minutes"]
+  ) * 90
+  players_df["creativity_per_90"] = (
+      players_df["creativity"] / players_df["minutes"]
+  ) * 90
+  players_df["xgi_per_90"] = (
+      players_df["expected_goal_involvements"] / players_df["minutes"]
+  ) * 90
+
+  return players_df, data["events"], teams_df
+
+
+# Load the main dataset, events info, and teams
+try:
+  df, events_data, teams_df = load_fpl_data()
+except Exception as e:
+  st.error(f"Error connecting to FPL API: {e}")
+  st.stop()
+
+
+# Fetch upcoming fixtures to display fixture difficulty / next opponents
+@st.cache_data(ttl=3600)
+def load_fixtures_data():
+  try:
+    r = requests.get("https://fantasy.premierleague.com/api/fixtures/")
+    if r.status_code == 200:
+      fixtures_df = pd.DataFrame(r.json())
+      return fixtures_df
+  except:
+    pass
+  return pd.DataFrame()
+
+
+fixtures_df = load_fixtures_data()
+
+
+# Helper function to fetch rolling last-X-games data once GW5+ is live
+@st.cache_data(ttl=3600)
+def fetch_rolling_data(player_ids, num_games=5):
+  rolling_records = []
+  for pid in player_ids:
+    try:
+      r = requests.get(
+          f"https://fantasy.premierleague.com/api/element-summary/{pid}/"
+      )
+      if r.status_code == 200:
+        history = r.json().get("history", [])
+        if history:
+          recent_games = history[-num_games:]
+          sum_mins = sum(
+              int(g.get("minutes", 0) or 0) for g in recent_games
+          )
+          sum_xg = sum(
+              float(g.get("expected_goals", 0) or 0) for g in recent_games
+          )
+          sum_xa = sum(
+              float(g.get("expected_assists", 0) or 0) for g in recent_games
+          )
+          sum_inf = sum(
+              float(g.get("influence", 0) or 0) for g in recent_games
+          )
+          sum_creat = sum(
+              float(g.get("creativity", 0) or 0) for g in recent_games
+          )
+          sum_threat = sum(
+              float(g.get("threat", 0) or 0) for g in recent_games
+          )
+          sum_pts = sum(int(g.get("total_points", 0) or 0) for g in recent_games)
+          sum_cs = sum(
+              int(g.get("clean_sheets", 0) or 0) for g in recent_games
+          )
+          sum_gc = sum(
+              int(g.get("goals_conceded", 0) or 0) for g in recent_games
+          )
+          sum_bps = sum(int(g.get("bps", 0) or 0) for g in recent_games)
+          sum_bonus = sum(int(g.get("bonus", 0) or 0) for g in recent_games)
+
+          div_mins = sum_mins if sum_mins > 0 else 1
+
+          rolling_records.append({
+              "id": pid,
+              "rolling_minutes": sum_mins,
+              "rolling_xg": sum_xg,
+              "rolling_xa": sum_xa,
+              "rolling_xgi": sum_xg + sum_xa,
+              "rolling_influence": sum_inf,
+              "rolling_creativity": sum_creat,
+              "rolling_threat": sum_threat,
+              "rolling_points": sum_pts,
+              "rolling_clean_sheets": sum_cs,
+              "rolling_goals_conceded": sum_gc,
+              "rolling_bps": sum_bps,
+              "rolling_bonus": sum_bonus,
+              "rolling_inf_per_90": (sum_inf / div_mins) * 90,
+              "rolling_creat_per_90": (sum_creat / div_mins) * 90,
+              "rolling_threat_per_90": (sum_threat / div_mins) * 90,
+              "rolling_xgi_per_90": ((sum_xg + sum_xa) / div_mins) * 90,
+          })
+    except:
+      continue
+
+  if rolling_records:
+    return pd.DataFrame(rolling_records)
+  return pd.DataFrame()
+
+
+# ---------------------------------------------------------
+# SIDEBAR: CUSTOM PRESET MANAGER & COMPLETE FILTER SUITE
+# ---------------------------------------------------------
+st.sidebar.header("Command Center")
+
+# Initialize custom presets in session state with comprehensive parameters
+if "saved_presets" not in st.session_state:
+  st.session_state.saved_presets = {
+      "Default (All Players)": {
+          "pos": "All",
+          "price": 14.0,
+          "min_mode": "Total",
+          "mins_val": 0,
+          "form": 0.0,
+          "xgi": 0.0,
+          "inf": 0.0,
+          "creat": 0.0,
+          "threat": 0.0,
+          "clean_sheets": 0.0,
+          "goals_conceded": 40.0,
+          "bonus": 0,
+          "bps": 0,
+          "max_fdr": 5,
+      },
+      "Elite Midfielder Core": {
+          "pos": "Midfielder",
+          "price": 12.0,
+          "min_mode": "Total",
+          "mins_val": 450,
+          "form": 4.0,
+          "xgi": 3.0,
+          "inf": 150.0,
+          "creat": 150.0,
+          "threat": 150.0,
+          "clean_sheets": 0.0,
+          "goals_conceded": 40.0,
+          "bonus": 2,
+          "bps": 50,
+          "max_fdr": 3,
+      },
+  }
+
+st.sidebar.subheader("🎛️ Custom Preset Manager")
+
+preset_names = list(st.session_state.saved_presets.keys())
+selected_preset = st.sidebar.selectbox("Load Saved Preset:", preset_names)
+
+# Pull chosen preset dictionary values safely
+current_values = st.session_state.saved_presets[selected_preset]
+
+positions_list = [
+    "All",
+    "Goalkeeper",
+    "Defender",
+    "Midfielder",
+    "Forward",
+]
+default_pos_index = (
+    positions_list.index(current_values["pos"])
+    if current_values["pos"] in positions_list
+    else 0
+)
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("⚙️ Comprehensive Filter Suite")
+
+# 1. Position & Price
+f_pos = st.sidebar.selectbox(
+    "Position", positions_list, index=default_pos_index
+)
+f_price = st.sidebar.slider(
+    "Max Price (£M)", 4.0, 14.0, float(current_values.get("price", 14.0))
+)
+
+# 2. Minutes Played (Total vs Per 90 accumulation choice)
+f_min_mode = st.sidebar.radio(
+    "Minutes Filter Mode",
+    ["Total", "Per 90 Accumulation"],
+    index=(
+        0 if current_values.get("min_mode", "Total") == "Total" else 1
+    ),
+)
+if f_min_mode == "Total":
+  f_mins = st.sidebar.number_input(
+      "Minimum Total Minutes Played",
+      value=int(current_values.get("mins_val", 0)),
+      step=30,
+  )
+else:
+  f_mins = st.sidebar.number_input(
+      "Minimum Minutes Filter Threshold", value=0, step=30
+  )
+
+# 3. Fixture Difficulty Rating (FDR) Threshold
+f_max_fdr = st.sidebar.slider(
+    "Max Next FDR (Fixture Difficulty)",
+    1,
+    5,
+    int(current_values.get("max_fdr", 5)),
+)
+st.sidebar.caption(
+    "Filters based on upcoming opponent fixture difficulty ranking (1 = easiest,"
+    " 5 = hardest)."
+)
+
+# 4. Form & Performance Metrics
+f_form = st.sidebar.number_input(
+    "Minimum Form", value=float(current_values.get("form", 0.0))
+)
+f_xgi = st.sidebar.number_input(
+    "Minimum Expected Goal Involvements (xGI)",
+    value=float(current_values.get("xgi", 0.0)),
+)
+
+# 5. ICT Metrics & Defensive Contributions
+f_inf = st.sidebar.number_input(
+    "Minimum Influence", value=float(current_values.get("inf", 0.0))
+)
+f_creat = st.sidebar.number_input(
+    "Minimum Creativity", value=float(current_values.get("creat", 0.0))
+)
+f_threat = st.sidebar.number_input(
+    "Minimum Threat", value=float(current_values.get("threat", 0.0))
+)
+f_cs = st.sidebar.number_input(
+    "Minimum Clean Sheets",
+    value=float(current_values.get("clean_sheets", 0.0)),
+)
+f_gc = st.sidebar.slider(
+    "Max Goals Conceded",
+    0,
+    40,
+    int(current_values.get("goals_conceded", 40)),
+)
+
+# 6. Bonus Points & Total BPS
+f_bonus = st.sidebar.number_input(
+    "Minimum Bonus Points", value=int(current_values.get("bonus", 0)), step=1
+)
+f_bps = st.sidebar.number_input(
+    "Minimum Total BPS", value=int(current_values.get("bps", 0)), step=10
+)
+
+# Rolling Last-X-Games Window Toggle
+st.sidebar.markdown("---")
+use_rolling_filter = st.sidebar.checkbox(
+    "🔥 Use Last X Games Rolling Window (GW5+)"
+)
+rolling_window_size = 5
+if use_rolling_filter:
+  rolling_window_size = st.sidebar.slider(
+      "Number of Recent Games", 3, 10, 5, key="rolling_slider"
+  )
+  st.sidebar.caption(
+      "Switches stats to aggregate strictly from the chosen recent match"
+      " block."
+  )
+
+st.sidebar.markdown("---")
+
+# Save / Update Custom Preset Option
+new_preset_name = st.sidebar.text_input(
+    "Preset Name (Type new or existing name to update):"
+)
+if st.sidebar.button("💾 Save / Update Preset"):
+  if new_preset_name:
+    st.session_state.saved_presets[new_preset_name] = {
+        "pos": f_pos,
+        "price": f_price,
+        "min_mode": f_min_mode,
+        "mins_val": f_mins,
+        "form": f_form,
+        "xgi": f_xgi,
+        "inf": f_inf,
+        "creat": f_creat,
+        "threat": f_threat,
+        "clean_sheets": f_cs,
+        "goals_conceded": f_gc,
+        "bonus": f_bonus,
+        "bps": f_bps,
+        "max_fdr": f_max_fdr,
+    }
+    st.sidebar.success(f"Preset '{new_preset_name}' saved successfully!")
+    st.rerun()
+  else:
+    st.sidebar.error("Please enter a preset name first.")
+
+
+# ---------------------------------------------------------
+# FILTERING & ROLLING ENGINE
+# ---------------------------------------------------------
+filtered_df = df.copy()
+
+# Map next fixture difficulty if available
+if not fixtures_df.empty and "team" in filtered_df.columns:
+  # Find next upcoming fixture for each team
+  next_fixtures = fixtures_df[fixtures_df["finished"] == False].sort_values(
+      "event"
+  )
+  team_fdr_map = {}
+  for idx, row in filtered_df.iterrows():
+    team_id = row["team"]
+    # Get first unplayed fixture matching home or away
+    team_fix = next_fixtures[
+        (next_fixtures["team_h"] == team_id)
+        | (next_fixtures["team_a"] == team_id)
+    ].head(1)
+    if not team_fix.empty:
+      fix_row = team_fix.iloc[0]
+      if fix_row["team_h"] == team_id:
+        team_fdr_map[team_id] = fix_row.get("team_h_difficulty", 3)
+      else:
+        team_fdr_map[team_id] = fix_row.get("team_a_difficulty", 3)
+    else:
+      team_fdr_map[team_id] = 3
+  filtered_df["next_fdr"] = filtered_df["team"].map(team_fdr_map).fillna(3)
+else:
+  filtered_df["next_fdr"] = 3
+
+# If rolling window is enabled, fetch and merge sequence data
+if use_rolling_filter:
+  with st.spinner("Fetching latest player match history..."):
+    rolling_df = fetch_rolling_data(
+        filtered_df["id"].tolist(), num_games=rolling_window_size
+    )
+    if not rolling_df.empty:
+      filtered_df = filtered_df.merge(rolling_df, on="id", how="left").fillna(
           0
       )
+      filtered_df["minutes"] = filtered_df["rolling_minutes"]
+      filtered_df["expected_goals"] = filtered_df["rolling_xg"]
+      filtered_df["expected_assists"] = filtered_df["rolling_xa"]
+      filtered_df["expected_goal_involvements"] = filtered_df["rolling_xgi"]
+      filtered_df["influence"] = filtered_df["rolling_influence"]
+      filtered_df["creativity"] = filtered_df["rolling_creativity"]
+      filtered_df["threat"] = filtered_df["rolling_threat"]
+      filtered_df["total_points"] = filtered_df["rolling_points"]
+      filtered_df["clean_sheets"] = filtered_df["rolling_clean_sheets"]
+      filtered_df["goals_conceded"] = filtered_df["rolling_goals_conceded"]
+      filtered_df["bps"] = filtered_df["rolling_bps"]
+      filtered_df["bonus"] = filtered_df["rolling_bonus"]
+      filtered_df["influence_per_90"] = filtered_df["rolling_inf_per_90"]
+      filtered_df["creativity_per_90"] = filtered_df["rolling_creat_per_90"]
+      filtered_df["threat_per_90"] = filtered_df["rolling_threat_per_90"]
+      filtered_df["xgi_per_90"] = filtered_df["rolling_xgi_per_90"]
 
-  # --- CALCULATE RATES PER 90 ---
-  def calc_per_90(row, col_name):
-    return (
-        round((row[col_name] / row["minutes"]) * 90, 2)
-        if row["minutes"] > 0
-        else 0.0
-    )
+# Apply Full Suite of Filters
+if f_pos != "All":
+  filtered_df = filtered_df[filtered_df["position"] == f_pos]
 
-  df_players["points_per_90"] = df_players.apply(
-      lambda r: calc_per_90(r, "total_points"), axis=1
+filtered_df = filtered_df[filtered_df["now_cost"] <= f_price]
+filtered_df = filtered_df[filtered_df["next_fdr"] <= f_max_fdr]
+filtered_df = filtered_df[filtered_df["form"] >= f_form]
+filtered_df = filtered_df[
+    filtered_df["expected_goal_involvements"] >= f_xgi
+]
+filtered_df = filtered_df[filtered_df["influence"] >= f_inf]
+filtered_df = filtered_df[filtered_df["creativity"] >= f_creat]
+filtered_df = filtered_df[filtered_df["threat"] >= f_threat]
+filtered_df = filtered_df[filtered_df["clean_sheets"] >= f_cs]
+filtered_df = filtered_df[filtered_df["goals_conceded"] <= f_gc]
+filtered_df = filtered_df[filtered_df["bonus"] >= f_bonus]
+filtered_df = filtered_df[filtered_df["bps"] >= f_bps]
+
+# Minutes filter rule (Total vs Per 90 Accumulation threshold)
+if f_min_mode == "Total":
+  filtered_df = filtered_df[filtered_df["minutes"] >= f_mins]
+else:
+  # If per 90 mode threshold chosen, filter based on calculated accumulation rates
+  filtered_df = filtered_df[filtered_df["xgi_per_90"] >= (f_mins / 90.0)]
+
+
+# ---------------------------------------------------------
+# MAIN DASHBOARD DISPLAY
+# ---------------------------------------------------------
+col1, col2 = st.columns([3, 1])
+
+with col1:
+  window_label = (
+      f" (Last {rolling_window_size} Games Form)"
+      if use_rolling_filter
+      else " (Season Totals)"
   )
-  df_players["bps_per_90"] = df_players.apply(
-      lambda r: calc_per_90(r, "bps"), axis=1
-  )
-  df_players["influence_per_90"] = df_players.apply(
-      lambda r: calc_per_90(r, "influence"), axis=1
-  )
-  df_players["threat_per_90"] = df_players.apply(
-      lambda r: calc_per_90(r, "threat"), axis=1
-  )
-  df_players["creativity_per_90"] = df_players.apply(
-      lambda r: calc_per_90(r, "creativity"), axis=1
-  )
-  df_players["xgi_per_90"] = df_players.apply(
-      lambda r: calc_per_90(r, "expected_goal_involvements"), axis=1
-  )
-  df_players["def_contrib_per_90"] = df_players.apply(
-      lambda r: calc_per_90(r, "defensive_contributions"), axis=1
-  )
-
-  # --- 4. APPLY FILTERING ---
-  filtered_df = df_players.copy()
-
-  if selected_position != "All":
-    filtered_df = filtered_df[filtered_df["position"] == selected_position]
-
-  filtered_df = filtered_df[filtered_df["now_cost"] <= max_price]
-  filtered_df = filtered_df[filtered_df["dynamic_fdr"] <= max_fdr]
-
-  if min_minutes > 0:
-    filtered_df = filtered_df[filtered_df["minutes"] >= min_minutes]
-  if min_form > 0:
-    filtered_df = filtered_df[filtered_df["form"] >= min_form]
-
-  if metric_mode == "Total Accumulation":
-    if min_influence > 0:
-      filtered_df = filtered_df[filtered_df["influence"] >= min_influence]
-    if min_threat > 0:
-      filtered_df = filtered_df[filtered_df["threat"] >= min_threat]
-    if min_creativity > 0:
-      filtered_df = filtered_df[filtered_df["creativity"] >= min_creativity]
-    if min_xgi > 0:
-      filtered_df = filtered_df[
-          filtered_df["expected_goal_involvements"] >= min_xgi
-      ]
-    if min_def_contrib > 0:
-      filtered_df = filtered_df[
-          filtered_df["defensive_contributions"] >= min_def_contrib
-      ]
-    if min_bonus > 0:
-      filtered_df = filtered_df[filtered_df["bonus"] >= min_bonus]
-    if min_bps > 0:
-      filtered_df = filtered_df[filtered_df["bps"] >= min_bps]
-  else:
-    if min_influence > 0:
-      filtered_df = filtered_df[
-          filtered_df["influence_per_90"] >= min_influence
-      ]
-    if min_threat > 0:
-      filtered_df = filtered_df[filtered_df["threat_per_90"] >= min_threat]
-    if min_creativity > 0:
-      filtered_df = filtered_df[
-          filtered_df["creativity_per_90"] >= min_creativity
-      ]
-    if min_xgi > 0:
-      filtered_df = filtered_df[filtered_df["xgi_per_90"] >= min_xgi]
-    if min_def_contrib > 0:
-      filtered_df = filtered_df[
-          filtered_df["def_contrib_per_90"] >= min_def_contrib
-      ]
-    if min_bonus > 0:
-      filtered_df = filtered_df[filtered_df["bps_per_90"] >= min_bonus]
-
-  filtered_df["Player"] = (
-      filtered_df["first_name"] + " " + filtered_df["second_name"]
+  st.subheader(
+      f"📋 Filtered Shortlist{window_label} — {len(filtered_df)} players"
+      " matching criteria"
   )
 
-  display_columns = [
-      "Player",
-      "team_name",
-      "position",
-      "now_cost",
-      "dynamic_fdr",
-      "form",
-      "total_points",
-      "points_per_90",
-      "expected_goal_involvements",
-      "defensive_contributions",
-      "threat",
-      "creativity",
-      "influence",
-      "bonus",
-      "minutes",
-      "selected_by_percent",
-  ]
-
-  filtered_df = filtered_df.sort_values(
-      by=["form", "total_points"], ascending=[False, False]
-  )
-
-  # --- 5. RENDER RESULTS ---
-  st.subheader(f"Matching Shortlist ({len(filtered_df)} players found)")
-
+with col2:
   if not filtered_df.empty:
-    st.dataframe(
-        filtered_df[display_columns].rename(
-            columns={
-                "team_name": "Team",
-                "position": "Pos",
-                "now_cost": "Price (£m)",
-                "dynamic_fdr": f"Next {fixture_horizon} FDR",
-                "form": "Form",
-                "total_points": "Points",
-                "points_per_90": "Pts/90",
-                "expected_goal_involvements": "xGI",
-                "defensive_contributions": "Def Contrib",
-                "threat": "Threat",
-                "creativity": "Creativity",
-                "influence": "Influence",
-                "bonus": "Bonus",
-                "minutes": "Mins",
-                "selected_by_percent": "Ownership %",
-            }
-        ),
-        use_container_width=True,
+    csv_data = filtered_df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="📥 Download to CSV",
+        data=csv_data,
+        file_name="fpl_custom_watchlist.csv",
+        mime="text/csv",
     )
-  else:
-    st.warning(
-        "No players match this exact combination of filters. Try loosening"
-        " your thresholds."
-    )
+
+display_columns = [
+    "web_name",
+    "team_name",
+    "position",
+    "now_cost",
+    "next_fdr",
+    "total_points",
+    "form",
+    "minutes",
+    "expected_goal_involvements",
+    "xgi_per_90",
+    "influence",
+    "creativity",
+    "threat",
+    "clean_sheets",
+    "goals_conceded",
+    "bonus",
+    "bps",
+    "selected_by_percent",
+]
+
+st.dataframe(
+    filtered_df[display_columns].sort_values(
+        by="total_points", ascending=False
+    ),
+    use_container_width=True,
+)
