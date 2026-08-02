@@ -130,6 +130,10 @@ if df_players is not None:
     else:
       st.session_state["fpl_presets"] = {}
 
+  # Ensure loaded_preset_data exists in state
+  if "loaded_preset_data" not in st.session_state:
+    st.session_state["loaded_preset_data"] = {}
+
   # Preset Manager UI block
   with st.sidebar.expander("💾 Filter Presets Manager", expanded=False):
     preset_names = list(st.session_state["fpl_presets"].keys())
@@ -143,7 +147,7 @@ if df_players is not None:
             "fpl_presets"
         ][selected_preset]
         st.success(f"Loaded preset: {selected_preset}")
-        st.rerun()
+        st.rerun()  # Forces immediate visual update of all sliders/filters
 
     new_preset_name = st.text_input("New Preset Name", key="input_preset_name")
 
@@ -181,12 +185,11 @@ if df_players is not None:
         except Exception as e:
           st.warning(f"Could not write preset to disk: {e}")
 
-        st.success(
-            f"Preset '{preset_key}' saved successfully! (Change any filter or"
-            " refresh to view)"
-        )
+        st.success(f"Preset '{preset_key}' saved successfully!")
       else:
         st.warning("Please enter a valid name for the preset.")
+
+  p_data = st.session_state.get("loaded_preset_data", {})
   p_data = st.session_state.get("loaded_preset_data", {})
 
   # --- NEW: Data Scope Toggle (Season Totals vs Last X Gameweeks) ---
