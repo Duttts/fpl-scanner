@@ -181,8 +181,10 @@ if df_players is not None:
         except Exception as e:
           st.warning(f"Could not write preset to disk: {e}")
 
-        st.success(f"Preset '{preset_key}' saved successfully!")
-        st.rerun()
+        st.success(
+            f"Preset '{preset_key}' saved successfully! (Change any filter or"
+            " refresh to view)"
+        )
       else:
         st.warning("Please enter a valid name for the preset.")
   p_data = st.session_state.get("loaded_preset_data", {})
