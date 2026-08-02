@@ -116,99 +116,18 @@ if df_players is not None:
   # --- 3. SIDEBAR CONTROL PANEL ---
   st.sidebar.header("🔍 Filter Parameters")
 
-  PRESET_FILE = "fpl_presets.json"
-  if "fpl_presets" not in st.session_state:
-    if os.path.exists(PRESET_FILE):
-      try:
-        with open(PRESET_FILE, "r") as f:
-          st.session_state["fpl_presets"] = json.load(f)
-      except:
-        st.session_state["fpl_presets"] = {}
-    else:
-      st.session_state["fpl_presets"] = {}
-
-  if "loaded_preset_data" not in st.session_state:
-    st.session_state["loaded_preset_data"] = {}
-
-  # Preset Manager UI block
-  with st.sidebar.expander("💾 Filter Presets Manager", expanded=False):
-    preset_names = list(st.session_state["fpl_presets"].keys())
-    selected_preset = st.selectbox(
-        "Load Saved Preset", options=["-- Select --"] + preset_names
-    )
-
-    if selected_preset != "-- Select --":
-      if st.button("Apply Preset"):
-        st.session_state["loaded_preset_data"] = st.session_state[
-            "fpl_presets"
-        ][selected_preset]
-        st.success(f"Loaded preset: {selected_preset}")
-
-    new_preset_name = st.text_input("New Preset Name", key="input_preset_name")
-
-    if st.button("Save Current Filters as Preset"):
-      preset_key = new_preset_name.strip()
-      if preset_key:
-        current_state = {
-            "data_scope": locals().get("data_scope", "Season Totals"),
-            "rolling_window_size": locals().get("rolling_window_size", 5),
-            "selected_position": locals().get("selected_position", "All"),
-            "max_price": locals().get(
-                "max_price", float(df_players["now_cost"].max())
-            ),
-            "fixture_horizon": locals().get("fixture_horizon", 5),
-            "max_fdr": locals().get("max_fdr", 5.0),
-            "min_minutes": locals().get("min_minutes", 0),
-            "metric_mode": locals().get("metric_mode", "Total Accumulation"),
-            "min_influence": locals().get("min_influence", 0.0),
-            "min_threat": locals().get("min_threat", 0.0),
-            "min_creativity": locals().get("min_creativity", 0.0),
-            "min_xgi": locals().get("min_xgi", 0.0),
-            "min_def_contrib": locals().get("min_def_contrib", 0),
-            "min_form": locals().get("min_form", 0.0),
-            "min_bonus": locals().get("min_bonus", 0),
-            "min_bps": locals().get("min_bps", 0),
-        }
-        st.session_state["fpl_presets"][preset_key] = current_state
-        try:
-          with open(PRESET_FILE, "w") as f:
-            json.dump(st.session_state["fpl_presets"], f)
-        except Exception as e:
-          st.warning(f"Could not write preset to disk: {e}")
-
-        st.success(f"Preset '{preset_key}' saved successfully!")
-      else:
-        st.warning("Please enter a valid name for the preset.")
-
-  p_data = st.session_state.get("loaded_preset_data", {})
-
-  # --- DATA SCOPE & FILTERS WITH PRESET MAPPING ---
+  # --- DATA SCOPE & FILTERS ---
   scope_options = ["Season Totals", "Last X Gameweeks"]
-  saved_scope = p_data.get("data_scope", "Season Totals")
-  default_scope_idx = (
-      scope_options.index(saved_scope) if saved_scope in scope_options else 0
-  )
-
-  data_scope = st.sidebar.radio(
-      "Data Scope", options=scope_options, index=default_scope_idx
-  )
+  data_scope = st.sidebar.radio("Data Scope", options=scope_options)
 
   rolling_window_size = 5
   if data_scope == "Last X Gameweeks":
     rolling_window_size = st.sidebar.slider(
-        "Gameweek Window Size",
-        min_value=1,
-        max_value=10,
-        value=int(p_data.get("rolling_window_size", 5)),
-        step=1,
+        "Gameweek Window Size", min_value=1, max_value=10, value=5, step=1
     )
 
   positions = ["All"] + list(df_players["position"].unique())
-  saved_pos = p_data.get("selected_position", "All")
-  default_pos_idx = positions.index(saved_pos) if saved_pos in positions else 0
-  selected_position = st.sidebar.selectbox(
-      "Position", positions, index=default_pos_idx
-  )
+  selected_position = st.sidebar.selectbox("Position", positions)
 
   min_p, max_p = (
       float(df_players["now_cost"].min()),
@@ -218,7 +137,7 @@ if df_players is not None:
       "Max Price (£m)",
       min_value=min_p,
       max_value=max_p,
-      value=float(p_data.get("max_price", max_p)),
+      value=max_p,
       step=0.1,
   )
 
@@ -229,7 +148,7 @@ if df_players is not None:
       "Fixture Horizon (Next X Games)",
       min_value=1,
       max_value=10,
-      value=int(p_data.get("fixture_horizon", 5)),
+      value=5,
       step=1,
   )
 
@@ -260,120 +179,69 @@ if df_players is not None:
       f"Max Next {fixture_horizon} Fixture Difficulty (FDR)",
       min_value=1.0,
       max_value=5.0,
-      value=float(p_data.get("max_fdr", 5.0)),
+      value=5.0,
       step=0.1,
   )
   min_minutes = st.sidebar.number_input(
-      "Min Minutes Played",
-      min_value=0,
-      value=int(p_data.get("min_minutes", 0)),
-      step=90,
+      "Min Minutes Played", min_value=0, value=0, step=90
   )
 
   metric_options = ["Total Accumulation", "Per 90 Rates"]
-  saved_metric = p_data.get("metric_mode", "Total Accumulation")
-  default_metric_idx = (
-      metric_options.index(saved_metric)
-      if saved_metric in metric_options
-      else 0
-  )
-
   metric_mode = st.sidebar.radio(
-      "Filter Threshold Mode", options=metric_options, index=default_metric_idx
+      "Filter Threshold Mode", options=metric_options
   )
 
   st.sidebar.markdown("---")
   if metric_mode == "Total Accumulation":
     min_influence = st.sidebar.number_input(
-        "Min Influence",
-        min_value=0.0,
-        value=float(p_data.get("min_influence", 0.0)),
-        step=10.0,
+        "Min Influence", min_value=0.0, value=0.0, step=10.0
     )
     min_threat = st.sidebar.number_input(
-        "Min Threat",
-        min_value=0.0,
-        value=float(p_data.get("min_threat", 0.0)),
-        step=10.0,
+        "Min Threat", min_value=0.0, value=0.0, step=10.0
     )
     min_creativity = st.sidebar.number_input(
-        "Min Creativity",
-        min_value=0.0,
-        value=float(p_data.get("min_creativity", 0.0)),
-        step=10.0,
+        "Min Creativity", min_value=0.0, value=0.0, step=10.0
     )
     min_xgi = st.sidebar.number_input(
         "Min Expected Goal Involvements (xGI)",
         min_value=0.0,
-        value=float(p_data.get("min_xgi", 0.0)),
+        value=0.0,
         step=0.05,
     )
     min_def_contrib = st.sidebar.number_input(
-        "Min Defensive Contributions",
-        min_value=0,
-        value=int(p_data.get("min_def_contrib", 0)),
-        step=5,
+        "Min Defensive Contributions", min_value=0, value=0, step=5
     )
     min_form = st.sidebar.number_input(
-        "Min Form",
-        min_value=0.0,
-        value=float(p_data.get("min_form", 0.0)),
-        step=0.5,
+        "Min Form", min_value=0.0, value=0.0, step=0.5
     )
     min_bonus = st.sidebar.number_input(
-        "Min Bonus Points", min_value=0, value=int(p_data.get("min_bonus", 0))
+        "Min Bonus Points", min_value=0, value=0
     )
-    min_bps = st.sidebar.number_input(
-        "Min Total BPS", min_value=0, value=int(p_data.get("min_bps", 0))
-    )
+    min_bps = st.sidebar.number_input("Min Total BPS", min_value=0, value=0)
   else:
     min_influence = st.sidebar.number_input(
-        "Min Influence Per 90",
-        min_value=0.0,
-        value=float(p_data.get("min_influence", 0.0)),
-        step=5.0,
+        "Min Influence Per 90", min_value=0.0, value=0.0, step=5.0
     )
     min_threat = st.sidebar.number_input(
-        "Min Threat Per 90",
-        min_value=0.0,
-        value=float(p_data.get("min_threat", 0.0)),
-        step=5.0,
+        "Min Threat Per 90", min_value=0.0, value=0.0, step=5.0
     )
     min_creativity = st.sidebar.number_input(
-        "Min Creativity Per 90",
-        min_value=0.0,
-        value=float(p_data.get("min_creativity", 0.0)),
-        step=5.0,
+        "Min Creativity Per 90", min_value=0.0, value=0.0, step=5.0
     )
     min_xgi = st.sidebar.number_input(
-        "Min xGI Per 90",
-        min_value=0.0,
-        value=float(p_data.get("min_xgi", 0.0)),
-        step=0.05,
+        "Min xGI Per 90", min_value=0.0, value=0.0, step=0.05
     )
     min_def_contrib = st.sidebar.number_input(
-        "Min Def Contrib Per 90",
-        min_value=0.0,
-        value=float(p_data.get("min_def_contrib", 0.0)),
-        step=1.0,
+        "Min Def Contrib Per 90", min_value=0.0, value=0.0, step=1.0
     )
     min_form = st.sidebar.number_input(
-        "Min Form",
-        min_value=0.0,
-        value=float(p_data.get("min_form", 0.0)),
-        step=0.5,
+        "Min Form", min_value=0.0, value=0.0, step=0.5
     )
     min_bonus = st.sidebar.number_input(
-        "Min Bonus Per 90",
-        min_value=0.0,
-        value=float(p_data.get("min_bonus", 0.0)),
-        step=0.1,
+        "Min Bonus Per 90", min_value=0.0, value=0.0, step=0.1
     )
     min_bps = st.sidebar.number_input(
-        "Min BPS Per 90",
-        min_value=0.0,
-        value=float(p_data.get("min_bps", 0.0)),
-        step=5.0,
+        "Min BPS Per 90", min_value=0.0, value=0.0, step=5.0
     )
 
   def_col_candidates = [
