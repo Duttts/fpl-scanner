@@ -27,7 +27,7 @@ def load_fpl_data():
 
   if response_b.status_code != 200 or response_f.status_code != 200:
     st.error("Failed to fetch live data from Fantasy Premier League API.")
-    return None, None
+    return None, None, None, None
 
   data = response_b.json()
   fixtures = response_f.json()
@@ -143,7 +143,6 @@ if df_players is not None:
             "fpl_presets"
         ][selected_preset]
         st.success(f"Loaded preset: {selected_preset}")
-        st.rerun()
 
     new_preset_name = st.text_input("New Preset Name", key="input_preset_name")
 
