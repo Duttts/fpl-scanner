@@ -1,4 +1,5 @@
 import json
+import os
 import pandas as pd
 import requests
 import streamlit as st
@@ -79,7 +80,6 @@ def fetch_rolling_data(player_ids, num_games=5):
           sum_bps = sum(int(g.get("bps", 0) or 0) for g in recent_games)
           sum_bonus = sum(int(g.get("bonus", 0) or 0) for g in recent_games)
 
-          # Safe lookup for defensive contributions in historical logs if present
           sum_def = 0
           for g in recent_games:
             for def_key in [
@@ -116,9 +116,6 @@ if df_players is not None:
   # --- 3. SIDEBAR CONTROL PANEL ---
   st.sidebar.header("🔍 Filter Parameters")
 
-  import os
-
-  # Load persistent presets from file on startup if not already loaded
   PRESET_FILE = "fpl_presets.json"
   if "fpl_presets" not in st.session_state:
     if os.path.exists(PRESET_FILE):
@@ -130,7 +127,6 @@ if df_players is not None:
     else:
       st.session_state["fpl_presets"] = {}
 
-  # Ensure loaded_preset_data exists in state
   if "loaded_preset_data" not in st.session_state:
     st.session_state["loaded_preset_data"] = {}
 
@@ -147,7 +143,7 @@ if df_players is not None:
             "fpl_presets"
         ][selected_preset]
         st.success(f"Loaded preset: {selected_preset}")
-        st.rerun()  # Forces immediate visual update of all sliders/filters
+        st.rerun()
 
     new_preset_name = st.text_input("New Preset Name", key="input_preset_name")
 
@@ -174,11 +170,7 @@ if df_players is not None:
             "min_bonus": locals().get("min_bonus", 0),
             "min_bps": locals().get("min_bps", 0),
         }
-
-        # Save to session state
         st.session_state["fpl_presets"][preset_key] = current_state
-
-        # Save to local JSON file so it persists across app restarts
         try:
           with open(PRESET_FILE, "w") as f:
             json.dump(st.session_state["fpl_presets"], f)
@@ -190,19 +182,18 @@ if df_players is not None:
         st.warning("Please enter a valid name for the preset.")
 
   p_data = st.session_state.get("loaded_preset_data", {})
-  p_data = st.session_state.get("loaded_preset_data", {})
 
-  # --- NEW: Data Scope Toggle (Season Totals vs Last X Gameweeks) ---
+  # --- DATA SCOPE & FILTERS WITH PRESET MAPPING ---
+  scope_options = ["Season Totals", "Last X Gameweeks"]
+  saved_scope = p_data.get("data_scope", "Season Totals")
   default_scope_idx = (
-      1
-      if p_data.get("data_scope", "Season Totals") == "Last X Gameweeks"
-      else 0
+      scope_options.index(saved_scope) if saved_scope in scope_options else 0
   )
+
   data_scope = st.sidebar.radio(
-      "Data Scope",
-      options=["Season Totals", "Last X Gameweeks"],
-      index=default_scope_idx,
+      "Data Scope", options=scope_options, index=default_scope_idx
   )
+
   rolling_window_size = 5
   if data_scope == "Last X Gameweeks":
     rolling_window_size = st.sidebar.slider(
@@ -214,11 +205,8 @@ if df_players is not None:
     )
 
   positions = ["All"] + list(df_players["position"].unique())
-  default_pos_idx = (
-      positions.index(p_data.get("selected_position", "All"))
-      if p_data.get("selected_position", "All") in positions
-      else 0
-  )
+  saved_pos = p_data.get("selected_position", "All")
+  default_pos_idx = positions.index(saved_pos) if saved_pos in positions else 0
   selected_position = st.sidebar.selectbox(
       "Position", positions, index=default_pos_idx
   )
@@ -238,7 +226,6 @@ if df_players is not None:
   st.sidebar.markdown("---")
   st.sidebar.subheader("Fixture & Threshold Filters")
 
-  # Fixture Horizon Slider (1 to 10 games)
   fixture_horizon = st.sidebar.slider(
       "Fixture Horizon (Next X Games)",
       min_value=1,
@@ -247,7 +234,6 @@ if df_players is not None:
       step=1,
   )
 
-  # Dynamically calculate FDR based on the selected horizon slider
   team_fdr_map = {}
   for team_id in teams_df["id"]:
     team_fixtures = [
@@ -285,15 +271,16 @@ if df_players is not None:
       step=90,
   )
 
+  metric_options = ["Total Accumulation", "Per 90 Rates"]
+  saved_metric = p_data.get("metric_mode", "Total Accumulation")
   default_metric_idx = (
-      1
-      if p_data.get("metric_mode", "Total Accumulation") == "Per 90 Rates"
+      metric_options.index(saved_metric)
+      if saved_metric in metric_options
       else 0
   )
+
   metric_mode = st.sidebar.radio(
-      "Filter Threshold Mode",
-      options=["Total Accumulation", "Per 90 Rates"],
-      index=default_metric_idx,
+      "Filter Threshold Mode", options=metric_options, index=default_metric_idx
   )
 
   st.sidebar.markdown("---")
@@ -390,7 +377,6 @@ if df_players is not None:
         step=5.0,
     )
 
-  # Safe parsing for defensive contributions / defensive stats key checks
   def_col_candidates = [
       "defensive_contributions",
       "clearances_blocks_interceptions",
@@ -431,7 +417,6 @@ if df_players is not None:
           0
       )
 
-  # Apply rolling window swap if user selected Last X Gameweeks
   if data_scope == "Last X Gameweeks":
     with st.spinner(f"Fetching last {rolling_window_size} gameweeks data..."):
       rolling_df = fetch_rolling_data(
@@ -457,7 +442,6 @@ if df_players is not None:
           if col + "_rolling" in df_players.columns:
             df_players[col] = df_players[col + "_rolling"].fillna(0)
 
-  # --- CALCULATE RATES PER 90 ---
   def calc_per_90(row, col_name):
     return (
         round((row[col_name] / row["minutes"]) * 90, 2)
