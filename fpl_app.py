@@ -340,6 +340,7 @@ if df_players is not None:
 
 
   # --- PREDICTIVE MODEL CALCULATION (WITH FDR & MINUTES SAFETY) ---
+  # --- PREDICTIVE MODEL CALCULATION (WITH FDR & CORRECT MINUTES SAFETY) ---
   def calculate_predicted_points(row):
     total_mins = row["minutes"]
     if total_mins <= 0:
@@ -353,26 +354,29 @@ if df_players is not None:
     # 1. Blended Baseline Pts/90
     xgi_points_equiv = xgi_p90 * 4.5
     inf_points_equiv = min(3.0, inf_p90 / 50.0)
-    
+
     blended_baseline_p90 = (
-        (pts_p90 * 0.30) + 
-        (xgi_points_equiv * 0.30) + 
-        (form_val * 0.20) + 
-        (inf_points_equiv * 0.20)
+        (pts_p90 * 0.30)
+        + (xgi_points_equiv * 0.30)
+        + (form_val * 0.20)
+        + (inf_points_equiv * 0.20)
     )
 
-    # 2. Dynamic FDR Multiplier (FDR 1 = +25%, FDR 3 = neutral, FDR 5 = -30%)
+    # 2. Dynamic FDR Multiplier (Keeps your fixture difficulty scaling)
     fdr = row["dynamic_fdr"]
     fdr_multiplier = max(0.70, 1.35 - (0.08 * fdr))
 
-    # 3. Minutes Safety Factor (Ratio of actual minutes played over max possible in window)
-    window_games = rolling_window_size if data_scope == "Last X Gameweeks" else 10
-    max_possible_mins = window_games * 90.0
+    # 3. Corrected Minutes Safety Factor based on Data Scope
+    if data_scope == "Last X Gameweeks":
+      max_possible_mins = rolling_window_size * 90.0
+    else:
+      max_possible_mins = 3420.0  # Full 38-game Premier League season
+
     minutes_factor = min(1.0, total_mins / max_possible_mins)
 
     # 4. Final Prediction: Pts/90 * FDR * Rotation/Minutes Safety Factor
     predicted_pts = blended_baseline_p90 * fdr_multiplier * minutes_factor
-    
+
     return round(max(0.0, predicted_pts), 2)
 
   df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points, axis=1)
