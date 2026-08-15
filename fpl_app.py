@@ -112,6 +112,52 @@ def fetch_rolling_data(player_ids, num_games=5):
   return pd.DataFrame()
 
 
+# --- RECENT OPPONENT VULNERABILITY HELPER FUNCTION ---
+def calculate_recent_opponent_vulnerability(
+    opponent_id, fixtures_list, window=5
+):
+  """Calculates an opponent's defensive vulnerability based strictly
+
+  on their last completed matches within the given rolling window.
+  """
+  if not opponent_id or not fixtures_list:
+    return 1.0
+
+  # Filter completed matches involving this opponent (home or away)
+  opp_fixtures = [
+      f
+      for f in fixtures_list
+      if (f["team_h"] == opponent_id or f["team_a"] == opponent_id)
+      and f["finished"]
+  ]
+
+  if not opp_fixtures:
+    return 1.0
+
+  # Sort by event (gameweek) descending to get most recent first
+  opp_fixtures = sorted(
+      opp_fixtures, key=lambda x: x.get("event", 0), reverse=True
+  )
+
+  recent_matches = opp_fixtures[:window]
+  match_count = len(recent_matches)
+
+  if match_count == 0:
+    return 1.0
+
+  total_conceded = 0
+  for match in recent_matches:
+    if match["team_h"] == opponent_id:
+      total_conceded += match["team_h_score"]
+    else:
+      total_conceded += match["team_a_score"]
+
+  recent_conceded_per_match = total_conceded / match_count
+  vulnerability_score = recent_conceded_per_match / 1.3  # League average baseline
+
+  return round(vulnerability_score, 2)
+
+
 if df_players is not None:
   # --- 3. SIDEBAR CONTROL PANEL ---
   st.sidebar.header("🔍 Filter Parameters")
@@ -152,7 +198,10 @@ if df_players is not None:
       step=1,
   )
 
+  # --- MAP UPCOMING OPPONENT & FDR ---
   team_fdr_map = {}
+  next_opponent_map = {}
+
   for team_id in teams_df["id"]:
     team_fixtures = [
         f
@@ -170,10 +219,29 @@ if df_players is not None:
         else:
           difficulties.append(f["team_a_difficulty"])
       team_fdr_map[team_id] = round(sum(difficulties) / len(difficulties), 2)
+
+      # Store immediate next opponent ID for vulnerability scoring
+      first_fixture = next_fixtures[0]
+      if first_fixture["team_h"] == team_id:
+        next_opponent_map[team_id] = first_fixture["team_a"]
+      else:
+        next_opponent_map[team_id] = first_fixture["team_h"]
     else:
       team_fdr_map[team_id] = 3.0
+      next_opponent_map[team_id] = None
 
   df_players["dynamic_fdr"] = df_players["team"].map(team_fdr_map)
+  df_players["upcoming_opponent_team_id"] = df_players["team"].map(
+      next_opponent_map
+  )
+
+  # Calculate Recent Opponent Vulnerability based on rolling window size
+  df_players["opponent_vulnerability"] = df_players.apply(
+      lambda row: calculate_recent_opponent_vulnerability(
+          row.get("upcoming_opponent_team_id"), fixtures, rolling_window_size
+      ),
+      axis=1,
+  )
 
   max_fdr = st.sidebar.slider(
       f"Max Next {fixture_horizon} Fixture Difficulty (FDR)",
@@ -182,6 +250,12 @@ if df_players is not None:
       value=5.0,
       step=0.1,
   )
+
+  # --- SIDEBAR FIXTURE TARGETING TOGGLE ---
+  leaky_defenses_only = st.sidebar.checkbox(
+      "🎯 Target Leaky Defenses Only (Vulnerability > 1.2)", value=False
+  )
+
   min_minutes = st.sidebar.number_input(
       "Min Minutes Played", min_value=0, value=0, step=90
   )
@@ -275,6 +349,7 @@ if df_players is not None:
       "bps",
       "bonus",
       "defensive_contributions",
+      "opponent_vulnerability",
   ]
   for col in numeric_cols:
     if col in df_players.columns:
@@ -307,14 +382,12 @@ if df_players is not None:
           if col + "_rolling" in df_players.columns:
             df_players[col] = df_players[col + "_rolling"].fillna(0)
 
-
   def calc_per_90(row, col_name):
     return (
         round((row[col_name] / row["minutes"]) * 90, 2)
         if row["minutes"] > 0
         else 0.0
     )
-
 
   df_players["points_per_90"] = df_players.apply(
       lambda r: calc_per_90(r, "total_points"), axis=1
@@ -339,7 +412,6 @@ if df_players is not None:
   )
 
 
-  # --- PREDICTIVE MODEL CALCULATION (WITH FDR & MINUTES SAFETY) ---
   # --- PREDICTIVE MODEL CALCULATION (WITH FDR & CORRECT MINUTES SAFETY) ---
   def calculate_predicted_points(row):
     total_mins = row["minutes"]
@@ -362,7 +434,7 @@ if df_players is not None:
         + (inf_points_equiv * 0.20)
     )
 
-    # 2. Dynamic FDR Multiplier (Keeps your fixture difficulty scaling)
+    # 2. Dynamic FDR Multiplier
     fdr = row["dynamic_fdr"]
     fdr_multiplier = max(0.70, 1.35 - (0.08 * fdr))
 
@@ -370,16 +442,19 @@ if df_players is not None:
     if data_scope == "Last X Gameweeks":
       max_possible_mins = rolling_window_size * 90.0
     else:
-      max_possible_mins = 3420.0  # Full 38-game Premier League season
+      max_possible_mins = 3420.0
 
     minutes_factor = min(1.0, total_mins / max_possible_mins)
 
-    # 4. Final Prediction: Pts/90 * FDR * Rotation/Minutes Safety Factor
+    # 4. Final Prediction
     predicted_pts = blended_baseline_p90 * fdr_multiplier * minutes_factor
 
     return round(max(0.0, predicted_pts), 2)
 
-  df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points, axis=1)
+
+  df_players["predicted_gw_points"] = df_players.apply(
+      calculate_predicted_points, axis=1
+  )
 
 
   # --- 4. APPLY FILTERING ---
@@ -390,6 +465,9 @@ if df_players is not None:
 
   filtered_df = filtered_df[filtered_df["now_cost"] <= max_price]
   filtered_df = filtered_df[filtered_df["dynamic_fdr"] <= max_fdr]
+
+  if leaky_defenses_only:
+    filtered_df = filtered_df[filtered_df["opponent_vulnerability"] > 1.2]
 
   if min_minutes > 0:
     filtered_df = filtered_df[filtered_df["minutes"] >= min_minutes]
@@ -421,7 +499,9 @@ if df_players is not None:
           filtered_df["influence_per_90"] >= min_influence
       ]
     if min_threat > 0:
-      filtered_df = filtered_df[filtered_df["threat_per_90"] >= min_threat]
+      filtered_df = filtered_df[
+          filtered_df["threat_per_90"] >= min_threat
+      ]
     if min_creativity > 0:
       filtered_df = filtered_df[
           filtered_df["creativity_per_90"] >= min_creativity
@@ -429,7 +509,9 @@ if df_players is not None:
     if min_xgi > 0:
       filtered_df = filtered_df[filtered_df["xgi_per_90"] >= min_xgi]
     if min_def_contrib > 0:
-      filtered_df = filtered_df[filtered_df["def_contrib_per_90"] >= min_def_contrib]
+      filtered_df = filtered_df[
+          filtered_df["def_contrib_per_90"] >= min_def_contrib
+      ]
     if min_bonus > 0:
       filtered_df = filtered_df[filtered_df["bps_per_90"] >= min_bonus]
 
@@ -443,6 +525,7 @@ if df_players is not None:
       "position",
       "now_cost",
       "predicted_gw_points",
+      "opponent_vulnerability",
       "dynamic_fdr",
       "form",
       "total_points",
@@ -457,7 +540,7 @@ if df_players is not None:
       "selected_by_percent",
   ]
 
-  # Default sort by our complete predicted points model!
+  # Default sort by predicted points model
   filtered_df = filtered_df.sort_values(
       by=["predicted_gw_points", "form"], ascending=[False, False]
   ).reset_index(drop=True)
@@ -472,6 +555,7 @@ if df_players is not None:
             "position": "Pos",
             "now_cost": "Price (£m)",
             "predicted_gw_points": "Predicted GW Pts",
+            "opponent_vulnerability": "Opp. Vulnerability",
             "dynamic_fdr": f"Next {fixture_horizon} FDR",
             "form": "Form",
             "total_points": "Points",
