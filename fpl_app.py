@@ -214,9 +214,7 @@ if df_players is not None:
     min_form = st.sidebar.number_input(
         "Min Form", min_value=0.0, value=0.0, step=0.5
     )
-    min_bonus = st.sidebar.number_input(
-        "Min Bonus Points", min_value=0, value=0
-    )
+    min_bonus = st.sidebar.number_input("Min Bonus Points", min_value=0, value=0)
     min_bps = st.sidebar.number_input("Min Total BPS", min_value=0, value=0)
   else:
     min_influence = st.sidebar.number_input(
@@ -309,12 +307,14 @@ if df_players is not None:
           if col + "_rolling" in df_players.columns:
             df_players[col] = df_players[col + "_rolling"].fillna(0)
 
+
   def calc_per_90(row, col_name):
     return (
         round((row[col_name] / row["minutes"]) * 90, 2)
         if row["minutes"] > 0
         else 0.0
     )
+
 
   df_players["points_per_90"] = df_players.apply(
       lambda r: calc_per_90(r, "total_points"), axis=1
@@ -416,34 +416,48 @@ if df_players is not None:
 
   filtered_df = filtered_df.sort_values(
       by=["form", "total_points"], ascending=[False, False]
-  )
+  ).reset_index(drop=True)
 
   # --- 5. RENDER RESULTS ---
   st.subheader(f"Matching Shortlist ({len(filtered_df)} players found)")
 
   if not filtered_df.empty:
-    st.dataframe(
-        filtered_df[display_columns].rename(
-            columns={
-                "team_name": "Team",
-                "position": "Pos",
-                "now_cost": "Price (£m)",
-                "dynamic_fdr": f"Next {fixture_horizon} FDR",
-                "form": "Form",
-                "total_points": "Points",
-                "points_per_90": "Pts/90",
-                "expected_goal_involvements": "xGI",
-                "defensive_contributions": "Def Contrib",
-                "threat": "Threat",
-                "creativity": "Creativity",
-                "influence": "Influence",
-                "bonus": "Bonus",
-                "minutes": "Mins",
-                "selected_by_percent": "Ownership %",
-            }
-        ),
-        use_container_width=True,
+    renamed_df = filtered_df[display_columns].rename(
+        columns={
+            "team_name": "Team",
+            "position": "Pos",
+            "now_cost": "Price (£m)",
+            "dynamic_fdr": f"Next {fixture_horizon} FDR",
+            "form": "Form",
+            "total_points": "Points",
+            "points_per_90": "Pts/90",
+            "expected_goal_involvements": "xGI",
+            "defensive_contributions": "Def Contrib",
+            "threat": "Threat",
+            "creativity": "Creativity",
+            "influence": "Influence",
+            "bonus": "Bonus",
+            "minutes": "Mins",
+            "selected_by_percent": "Ownership %",
+        }
     )
+
+    # Render interactive table with multi-row selection enabled
+    event = st.dataframe(
+        renamed_df,
+        use_container_width=True,
+        on_select="rerun",
+        selection_mode="multi-row",
+    )
+
+    # --- 6. HEAD-TO-HEAD PLAYER COMPARISON ---
+    selected_indices = event.selection.get("rows", [])
+    if selected_indices:
+      st.markdown("---")
+      st.subheader("⚔️ Head-to-Head Player Comparison")
+      comparison_df = renamed_df.iloc[selected_indices]
+      st.dataframe(comparison_df, use_container_width=True)
+
   else:
     st.warning(
         "No players match this exact combination of filters. Try loosening your"
