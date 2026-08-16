@@ -392,7 +392,6 @@ if df_players is not None:
           0
       )
 
-  # Initialize default columns if Season Totals is selected so table won't break
   df_players["form_status"] = "Stable ➡️"
   df_players["form_trend_delta"] = 0.0
 
@@ -552,6 +551,47 @@ if df_players is not None:
   filtered_df["Player"] = (
       filtered_df["first_name"] + " " + filtered_df["second_name"]
   )
+
+  # --- TOP KPI SUMMARY CARDS ---
+  if not filtered_df.empty:
+    st.markdown("---")
+    kpi1, kpi2, kpi3 = st.columns(3)
+
+    # 1. Top Predicted Scorer
+    top_scorer = filtered_df.sort_values(
+        by="predicted_gw_points", ascending=False
+    ).iloc[0]
+    kpi1.metric(
+        "🔥 Top Predicted Scorer",
+        f"{top_scorer['Player']} ({top_scorer['team_name']})",
+        f"{top_scorer['predicted_gw_points']} pts",
+    )
+
+    # 2. Top Budget Pick (<= £6.5m)
+    budget_pool = filtered_df[filtered_df["now_cost"] <= 6.5]
+    if not budget_pool.empty:
+      best_budget = budget_pool.sort_values(
+          by="predicted_gw_points", ascending=False
+      ).iloc[0]
+      kpi2.metric(
+          "💎 Top Budget Pick (≤ £6.5m)",
+          f"{best_budget['Player']} (£{best_budget['now_cost']}m)",
+          f"{best_budget['predicted_gw_points']} pts",
+      )
+    else:
+      kpi2.metric("💎 Top Budget Pick", "None in filter", "0 pts")
+
+    # 3. Softest Opponent Target
+    if "opponent_vulnerability" in filtered_df.columns:
+      softest_def = filtered_df.sort_values(
+          by="opponent_vulnerability", ascending=False
+      ).iloc[0]
+      kpi3.metric(
+          "🎯 Best Fixture Target",
+          f"{softest_def['Player']} vs {softest_def['team_name']}",
+          f"Def. Vulnerability: {softest_def['opponent_vulnerability']}",
+      )
+    st.markdown("---")
 
   display_columns = [
       "Player",
