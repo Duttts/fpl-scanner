@@ -90,6 +90,43 @@ def fetch_rolling_data(player_ids, num_games=5):
                 sum_def += int(g.get(def_key, 0) or 0)
                 break
 
+          # --- FORM MOMENTUM / TREND DELTA CALCULATION ---
+          form_trend_val = 0.0
+          form_status = "Stable ➡️"
+
+          if len(recent_games) >= 4:
+            last_two = recent_games[-2:]
+            baseline = recent_games[:-2]
+
+            def get_composite_score(games):
+              n = len(games)
+              if n == 0:
+                return 0.0
+              xgi = sum(
+                  float(g.get("expected_goals", 0) or 0)
+                  + float(g.get("expected_assists", 0) or 0)
+                  for g in games
+              ) / n
+              threat = (
+                  sum(float(g.get("threat", 0) or 0) for g in games) / n
+              ) / 100.0
+              influence = (
+                  sum(float(g.get("influence", 0) or 0) for g in games) / n
+              ) / 100.0
+              return (xgi * 0.5) + (threat * 0.3) + (influence * 0.2)
+
+            recent_score = get_composite_score(last_two)
+            baseline_score = get_composite_score(baseline)
+
+            form_trend_val = round(recent_score - baseline_score, 2)
+
+            if form_trend_val > 0.10:
+              form_status = "Surging 📈"
+            elif form_trend_val < -0.10:
+              form_status = "Cooling 📉"
+            else:
+              form_status = "Stable ➡️"
+
           rolling_records.append({
               "id": pid,
               "minutes": sum_mins,
@@ -103,6 +140,8 @@ def fetch_rolling_data(player_ids, num_games=5):
               "bps": sum_bps,
               "bonus": sum_bonus,
               "defensive_contributions": sum_def,
+              "form_trend_delta": form_trend_val,
+              "form_status": form_status,
           })
     except:
       continue
@@ -123,7 +162,6 @@ def calculate_recent_opponent_vulnerability(
   if not opponent_id or not fixtures_list:
     return 1.0
 
-  # Filter completed matches involving this opponent (home or away)
   opp_fixtures = [
       f
       for f in fixtures_list
@@ -134,7 +172,6 @@ def calculate_recent_opponent_vulnerability(
   if not opp_fixtures:
     return 1.0
 
-  # Sort by event (gameweek) descending to get most recent first
   opp_fixtures = sorted(
       opp_fixtures, key=lambda x: x.get("event", 0), reverse=True
   )
@@ -153,7 +190,7 @@ def calculate_recent_opponent_vulnerability(
       total_conceded += match["team_a_score"]
 
   recent_conceded_per_match = total_conceded / match_count
-  vulnerability_score = recent_conceded_per_match / 1.3  # League average baseline
+  vulnerability_score = recent_conceded_per_match / 1.3
 
   return round(vulnerability_score, 2)
 
@@ -220,7 +257,6 @@ if df_players is not None:
           difficulties.append(f["team_a_difficulty"])
       team_fdr_map[team_id] = round(sum(difficulties) / len(difficulties), 2)
 
-      # Store immediate next opponent ID for vulnerability scoring
       first_fixture = next_fixtures[0]
       if first_fixture["team_h"] == team_id:
         next_opponent_map[team_id] = first_fixture["team_a"]
@@ -235,7 +271,6 @@ if df_players is not None:
       next_opponent_map
   )
 
-  # Calculate Recent Opponent Vulnerability based on rolling window size
   df_players["opponent_vulnerability"] = df_players.apply(
       lambda row: calculate_recent_opponent_vulnerability(
           row.get("upcoming_opponent_team_id"), fixtures, rolling_window_size
@@ -251,7 +286,6 @@ if df_players is not None:
       step=0.1,
   )
 
-  # --- SIDEBAR FIXTURE TARGETING TOGGLE ---
   leaky_defenses_only = st.sidebar.checkbox(
       "🎯 Target Leaky Defenses Only (Vulnerability > 1.2)", value=False
   )
@@ -350,12 +384,17 @@ if df_players is not None:
       "bonus",
       "defensive_contributions",
       "opponent_vulnerability",
+      "form_trend_delta",
   ]
   for col in numeric_cols:
     if col in df_players.columns:
       df_players[col] = pd.to_numeric(df_players[col], errors="coerce").fillna(
           0
       )
+
+  # Initialize default columns if Season Totals is selected so table won't break
+  df_players["form_status"] = "Stable ➡️"
+  df_players["form_trend_delta"] = 0.0
 
   if data_scope == "Last X Gameweeks":
     with st.spinner(f"Fetching last {rolling_window_size} gameweeks data..."):
@@ -378,6 +417,8 @@ if df_players is not None:
             "bps",
             "bonus",
             "defensive_contributions",
+            "form_trend_delta",
+            "form_status",
         ]:
           if col + "_rolling" in df_players.columns:
             df_players[col] = df_players[col + "_rolling"].fillna(0)
@@ -412,7 +453,7 @@ if df_players is not None:
   )
 
 
-  # --- PREDICTIVE MODEL CALCULATION (WITH FDR & CORRECT MINUTES SAFETY) ---
+  # --- PREDICTIVE MODEL CALCULATION ---
   def calculate_predicted_points(row):
     total_mins = row["minutes"]
     if total_mins <= 0:
@@ -423,7 +464,6 @@ if df_players is not None:
     form_val = row["form"]
     inf_p90 = row["influence_per_90"]
 
-    # 1. Blended Baseline Pts/90
     xgi_points_equiv = xgi_p90 * 4.5
     inf_points_equiv = min(3.0, inf_p90 / 50.0)
 
@@ -434,19 +474,15 @@ if df_players is not None:
         + (inf_points_equiv * 0.20)
     )
 
-    # 2. Dynamic FDR Multiplier
     fdr = row["dynamic_fdr"]
     fdr_multiplier = max(0.70, 1.35 - (0.08 * fdr))
 
-    # 3. Corrected Minutes Safety Factor based on Data Scope
     if data_scope == "Last X Gameweeks":
       max_possible_mins = rolling_window_size * 90.0
     else:
       max_possible_mins = 3420.0
 
     minutes_factor = min(1.0, total_mins / max_possible_mins)
-
-    # 4. Final Prediction
     predicted_pts = blended_baseline_p90 * fdr_multiplier * minutes_factor
 
     return round(max(0.0, predicted_pts), 2)
@@ -499,9 +535,7 @@ if df_players is not None:
           filtered_df["influence_per_90"] >= min_influence
       ]
     if min_threat > 0:
-      filtered_df = filtered_df[
-          filtered_df["threat_per_90"] >= min_threat
-      ]
+      filtered_df = filtered_df[filtered_df["threat_per_90"] >= min_threat]
     if min_creativity > 0:
       filtered_df = filtered_df[
           filtered_df["creativity_per_90"] >= min_creativity
@@ -525,6 +559,8 @@ if df_players is not None:
       "position",
       "now_cost",
       "predicted_gw_points",
+      "form_status",
+      "form_trend_delta",
       "opponent_vulnerability",
       "dynamic_fdr",
       "form",
@@ -540,7 +576,6 @@ if df_players is not None:
       "selected_by_percent",
   ]
 
-  # Default sort by predicted points model
   filtered_df = filtered_df.sort_values(
       by=["predicted_gw_points", "form"], ascending=[False, False]
   ).reset_index(drop=True)
@@ -555,6 +590,8 @@ if df_players is not None:
             "position": "Pos",
             "now_cost": "Price (£m)",
             "predicted_gw_points": "Predicted GW Pts",
+            "form_status": "Form Trend",
+            "form_trend_delta": "Trend Delta (+/-)",
             "opponent_vulnerability": "Opp. Vulnerability",
             "dynamic_fdr": f"Next {fixture_horizon} FDR",
             "form": "Form",
@@ -571,7 +608,6 @@ if df_players is not None:
         }
     )
 
-    # Render interactive table with multi-row selection enabled
     event = st.dataframe(
         renamed_df,
         use_container_width=True,
