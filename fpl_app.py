@@ -51,9 +51,9 @@ with st.spinner("Connecting to live FPL data & fixture feed..."):
   df_players, fixtures, teams_df, raw_data = load_fpl_data()
 
 
-# Helper function to fetch rolling last-X-games data if requested
+# Helper function to fetch rolling last-X-gameweeks data correctly (handling DGWs/BGWs)
 @st.cache_data(ttl=3600)
-def fetch_rolling_data(player_ids, num_games=5):
+def fetch_rolling_data(player_ids, num_gameweeks=5):
   rolling_records = []
   for pid in player_ids:
     try:
@@ -63,25 +63,50 @@ def fetch_rolling_data(player_ids, num_games=5):
       if r.status_code == 200:
         history = r.json().get("history", [])
         if history:
-          recent_games = history[-num_games:]
-          sum_mins = sum(int(g.get("minutes", 0) or 0) for g in recent_games)
+          # Group matches by actual FPL round (Gameweek) to properly handle Double Gameweeks
+          gw_groups = {}
+          for match in history:
+            gw = match.get("round")
+            if gw:
+              if gw not in gw_groups:
+                gw_groups[gw] = []
+              gw_groups[gw].append(match)
+
+          # Sort completed gameweeks chronologically and take the last X gameweeks
+          sorted_gws = sorted(gw_groups.keys())
+          recent_gw_keys = sorted_gws[-num_gameweeks:]
+
+          recent_matches = []
+          for gw in recent_gw_keys:
+            recent_matches.extend(gw_groups[gw])
+
+          if not recent_matches:
+            continue
+
+          sum_mins = sum(int(g.get("minutes", 0) or 0) for g in recent_matches)
           sum_xg = sum(
-              float(g.get("expected_goals", 0) or 0) for g in recent_games
+              float(g.get("expected_goals", 0) or 0) for g in recent_matches
           )
           sum_xa = sum(
-              float(g.get("expected_assists", 0) or 0) for g in recent_games
+              float(g.get("expected_assists", 0) or 0) for g in recent_matches
           )
-          sum_inf = sum(float(g.get("influence", 0) or 0) for g in recent_games)
+          sum_inf = sum(
+              float(g.get("influence", 0) or 0) for g in recent_matches
+          )
           sum_creat = sum(
-              float(g.get("creativity", 0) or 0) for g in recent_games
+              float(g.get("creativity", 0) or 0) for g in recent_matches
           )
-          sum_threat = sum(float(g.get("threat", 0) or 0) for g in recent_games)
-          sum_pts = sum(int(g.get("total_points", 0) or 0) for g in recent_games)
-          sum_bps = sum(int(g.get("bps", 0) or 0) for g in recent_games)
-          sum_bonus = sum(int(g.get("bonus", 0) or 0) for g in recent_games)
+          sum_threat = sum(
+              float(g.get("threat", 0) or 0) for g in recent_matches
+          )
+          sum_pts = sum(
+              int(g.get("total_points", 0) or 0) for g in recent_matches
+          )
+          sum_bps = sum(int(g.get("bps", 0) or 0) for g in recent_matches)
+          sum_bonus = sum(int(g.get("bonus", 0) or 0) for g in recent_matches)
 
           sum_def = 0
-          for g in recent_games:
+          for g in recent_matches:
             for def_key in [
                 "defensive_contributions",
                 "clearances_blocks_interceptions",
@@ -94,29 +119,39 @@ def fetch_rolling_data(player_ids, num_games=5):
           form_trend_val = 0.0
           form_status = "Stable ➡️"
 
-          if len(recent_games) >= 4:
-            last_two = recent_games[-2:]
-            baseline = recent_games[:-2]
+          if len(recent_gw_keys) >= 4:
+            last_two_gws = recent_gw_keys[-2:]
+            baseline_gws = recent_gw_keys[:-2]
 
-            def get_composite_score(games):
-              n = len(games)
+            last_two_matches = [
+                m for gw in last_two_gws for m in gw_groups[gw]
+            ]
+            baseline_matches = [
+                m for gw in baseline_gws for m in gw_groups[gw]
+            ]
+
+            def get_composite_score(matches):
+              n = len(matches)
               if n == 0:
                 return 0.0
-              xgi = sum(
-                  float(g.get("expected_goals", 0) or 0)
-                  + float(g.get("expected_assists", 0) or 0)
-                  for g in games
-              ) / n
+              xgi = (
+                  sum(
+                      float(g.get("expected_goals", 0) or 0)
+                      + float(g.get("expected_assists", 0) or 0)
+                      for g in matches
+                  )
+                  / n
+              )
               threat = (
-                  sum(float(g.get("threat", 0) or 0) for g in games) / n
+                  sum(float(g.get("threat", 0) or 0) for g in matches) / n
               ) / 100.0
               influence = (
-                  sum(float(g.get("influence", 0) or 0) for g in games) / n
+                  sum(float(g.get("influence", 0) or 0) for g in matches) / n
               ) / 100.0
               return (xgi * 0.5) + (threat * 0.3) + (influence * 0.2)
 
-            recent_score = get_composite_score(last_two)
-            baseline_score = get_composite_score(baseline)
+            recent_score = get_composite_score(last_two_matches)
+            baseline_score = get_composite_score(baseline_matches)
 
             form_trend_val = round(recent_score - baseline_score, 2)
 
@@ -143,7 +178,7 @@ def fetch_rolling_data(player_ids, num_games=5):
               "form_trend_delta": form_trend_val,
               "form_status": form_status,
           })
-    except:
+    except Exception:
       continue
 
   if rolling_records:
@@ -238,6 +273,7 @@ if df_players is not None:
   # --- MAP UPCOMING OPPONENT & FDR ---
   team_fdr_map = {}
   next_opponent_map = {}
+  team_short_name_map = teams_df.set_index("id")["short_name"].to_dict()
 
   for team_id in teams_df["id"]:
     team_fixtures = [
@@ -246,6 +282,8 @@ if df_players is not None:
         if (f["team_h"] == team_id or f["team_a"] == team_id)
         and not f["finished"]
     ]
+    # Explicitly sort upcoming fixtures by event/gameweek
+    team_fixtures = sorted(team_fixtures, key=lambda x: x.get("event", 999))
     next_fixtures = team_fixtures[:fixture_horizon]
 
     if next_fixtures:
@@ -270,6 +308,9 @@ if df_players is not None:
   df_players["upcoming_opponent_team_id"] = df_players["team"].map(
       next_opponent_map
   )
+  df_players["upcoming_opponent_name"] = df_players[
+      "upcoming_opponent_team_id"
+  ].map(team_short_name_map)
 
   df_players["opponent_vulnerability"] = df_players.apply(
       lambda row: calculate_recent_opponent_vulnerability(
@@ -396,9 +437,11 @@ if df_players is not None:
   df_players["form_trend_delta"] = 0.0
 
   if data_scope == "Last X Gameweeks":
-    with st.spinner(f"Fetching last {rolling_window_size} gameweeks data..."):
+    with st.spinner(
+        f"Fetching last {rolling_window_size} completed gameweeks data..."
+    ):
       rolling_df = fetch_rolling_data(
-          df_players["id"].tolist(), num_games=rolling_window_size
+          df_players["id"].tolist(), num_gameweeks=rolling_window_size
       )
       if not rolling_df.empty:
         df_players = df_players.merge(
@@ -476,13 +519,8 @@ if df_players is not None:
     fdr = row["dynamic_fdr"]
     fdr_multiplier = max(0.70, 1.35 - (0.08 * fdr))
 
-    if data_scope == "Last X Gameweeks":
-      max_possible_mins = rolling_window_size * 90.0
-    else:
-      max_possible_mins = 3420.0
-
-    minutes_factor = min(1.0, total_mins / max_possible_mins)
-    predicted_pts = blended_baseline_p90 * fdr_multiplier * minutes_factor
+    # Removed distortion factor that penalised short/late season sample sizes
+    predicted_pts = blended_baseline_p90 * fdr_multiplier
 
     return round(max(0.0, predicted_pts), 2)
 
@@ -545,8 +583,11 @@ if df_players is not None:
       filtered_df = filtered_df[
           filtered_df["def_contrib_per_90"] >= min_def_contrib
       ]
+    # Fixed bug: properly filter bonus points per 90 using the bonus column, not bps
     if min_bonus > 0:
-      filtered_df = filtered_df[filtered_df["bps_per_90"] >= min_bonus]
+      filtered_df = filtered_df[
+          (filtered_df["bonus"] / filtered_df["minutes"] * 90) >= min_bonus
+      ]
 
   filtered_df["Player"] = (
       filtered_df["first_name"] + " " + filtered_df["second_name"]
@@ -581,14 +622,19 @@ if df_players is not None:
     else:
       kpi2.metric("💎 Top Budget Pick", "None in filter", "0 pts")
 
-    # 3. Softest Opponent Target
+    # 3. Softest Opponent Target (Fixed team vs opponent mapping bug)
     if "opponent_vulnerability" in filtered_df.columns:
       softest_def = filtered_df.sort_values(
           by="opponent_vulnerability", ascending=False
       ).iloc[0]
+      opp_name = (
+          softest_def["upcoming_opponent_name"]
+          if pd.notna(softest_def["upcoming_opponent_name"])
+          else "Unknown"
+      )
       kpi3.metric(
           "🎯 Best Fixture Target",
-          f"{softest_def['Player']} vs {softest_def['team_name']}",
+          f"{softest_def['Player']} vs {opp_name}",
           f"Def. Vulnerability: {softest_def['opponent_vulnerability']}",
       )
     st.markdown("---")
