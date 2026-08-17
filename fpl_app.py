@@ -22,8 +22,8 @@ def load_fpl_data():
   url_bootstrap = "https://fantasy.premierleague.com/api/bootstrap-static/"
   url_fixtures = "https://fantasy.premierleague.com/api/fixtures/"
 
-  response_b = requests.get(url_bootstrap)
-  response_f = requests.get(url_fixtures)
+  response_b = requests.get(url_bootstrap, timeout=15)
+  response_f = requests.get(url_fixtures, timeout=15)
 
   if response_b.status_code != 200 or response_f.status_code != 200:
     st.error("Failed to fetch live data from Fantasy Premier League API.")
@@ -58,7 +58,8 @@ def fetch_rolling_data(player_ids, num_gameweeks=5):
   for pid in player_ids:
     try:
       r = requests.get(
-          f"https://fantasy.premierleague.com/api/element-summary/{pid}/"
+          f"https://fantasy.premierleague.com/api/element-summary/{pid}/",
+          timeout=15,
       )
       if r.status_code == 200:
         history = r.json().get("history", [])
@@ -478,6 +479,9 @@ if df_players is not None:
   df_players["bps_per_90"] = df_players.apply(
       lambda r: calc_per_90(r, "bps"), axis=1
   )
+  df_players["bonus_per_90"] = df_players.apply(
+      lambda r: calc_per_90(r, "bonus"), axis=1
+  )
   df_players["influence_per_90"] = df_players.apply(
       lambda r: calc_per_90(r, "influence"), axis=1
   )
@@ -496,38 +500,134 @@ if df_players is not None:
 
 
   # --- PREDICTIVE MODEL CALCULATION ---
-  def calculate_predicted_points(row):
-    total_mins = row["minutes"]
-    if total_mins <= 0:
-      return 0.0
+def calculate_predicted_points(row):
+    """
+    Estimate expected FPL points for the player's next fixture.
 
-    pts_p90 = row["points_per_90"]
-    xgi_p90 = row["xgi_per_90"]
-    form_val = row["form"]
-    inf_p90 = row["influence_per_90"]
+    Uses attacking output, minutes reliability, position-specific
+    clean-sheet value, BPS/bonus potential, form, fixture difficulty,
+    and opponent vulnerability.
 
-    xgi_points_equiv = xgi_p90 * 4.5
-    inf_points_equiv = min(3.0, inf_p90 / 50.0)
+    Small samples are dampened so one or two excellent appearances
+    do not automatically dominate the rankings.
+    """
 
-    blended_baseline_p90 = (
-        (pts_p90 * 0.30)
-        + (xgi_points_equiv * 0.30)
-        + (form_val * 0.20)
-        + (inf_points_equiv * 0.20)
+    minutes = float(row.get("minutes", 0) or 0)
+    position = str(row.get("position", "") or "")
+
+    if minutes <= 0:
+        return 0.0
+
+    # ---------------------------------------------------------
+    # 1. SAMPLE / MINUTES RELIABILITY
+    # ---------------------------------------------------------
+    sample_confidence = min(minutes / 450.0, 1.0)
+
+    if minutes < 180:
+        sample_confidence *= 0.70
+    elif minutes < 270:
+        sample_confidence *= 0.85
+
+    # ---------------------------------------------------------
+    # 2. EXPECTED ATTACKING OUTPUT
+    # ---------------------------------------------------------
+    xgi_p90 = float(row.get("xgi_per_90", 0) or 0)
+
+    if position in ("Forward", "Midfielder"):
+        attacking_points = xgi_p90 * 4.0
+    elif position == "Defender":
+        attacking_points = xgi_p90 * 3.5
+    else:  # Goalkeeper
+        attacking_points = xgi_p90 * 3.0
+
+    # Prevent extreme small-sample xGI from dominating.
+    attacking_points = min(attacking_points, 4.5)
+
+    # ---------------------------------------------------------
+    # 3. APPEARANCE EXPECTATION
+    # ---------------------------------------------------------
+    # Approximate 1 point for appearance plus another point when
+    # the player is reliable enough to reach the 60-minute threshold.
+    appearance_points = 1.0 + sample_confidence
+
+    # ---------------------------------------------------------
+    # 4. FIXTURE / CLEAN-SHEET EXPECTATION
+    # ---------------------------------------------------------
+    fdr = float(row.get("dynamic_fdr", 3.0) or 3.0)
+    fixture_quality = max(0.0, min(1.0, (5.0 - fdr) / 4.0))
+
+    if position == "Defender":
+        clean_sheet_points = 4.0 * fixture_quality
+    elif position == "Goalkeeper":
+        clean_sheet_points = 4.0 * fixture_quality
+    elif position == "Midfielder":
+        clean_sheet_points = 1.0 * fixture_quality
+    else:
+        clean_sheet_points = 0.0
+
+    # ---------------------------------------------------------
+    # 5. BONUS / BPS SIGNAL
+    # ---------------------------------------------------------
+    bps_p90 = float(row.get("bps_per_90", 0) or 0)
+    bonus_component = min(1.5, max(0.0, bps_p90 / 100.0))
+
+    # ---------------------------------------------------------
+    # 6. FORM = SMALL MODIFIER
+    # ---------------------------------------------------------
+    # Form is deliberately NOT a large component because it overlaps
+    # with recent points and attacking output.
+    form_value = float(row.get("form", 0) or 0)
+
+    if form_value >= 8:
+        form_modifier = 1.08
+    elif form_value >= 6:
+        form_modifier = 1.04
+    elif form_value < 3:
+        form_modifier = 0.94
+    elif form_value < 4:
+        form_modifier = 0.97
+    else:
+        form_modifier = 1.00
+
+    # ---------------------------------------------------------
+    # 7. OPPONENT VULNERABILITY
+    # ---------------------------------------------------------
+    vulnerability = float(
+        row.get("opponent_vulnerability", 1.0) or 1.0
     )
 
-    fdr = row["dynamic_fdr"]
-    fdr_multiplier = max(0.70, 1.35 - (0.08 * fdr))
+    vulnerability_modifier = max(
+        0.90,
+        min(1.15, 0.95 + (vulnerability * 0.05))
+    )
 
-    # Removed distortion factor that penalised short/late season sample sizes
-    predicted_pts = blended_baseline_p90 * fdr_multiplier
+    # ---------------------------------------------------------
+    # 8. BUILD EXPECTED SCORE
+    # ---------------------------------------------------------
+    performance_component = (
+        attacking_points
+        + clean_sheet_points
+        + bonus_component
+    )
 
-    return round(max(0.0, predicted_pts), 2)
+    # Conservative adjustment for limited samples.
+    expected_points = (
+        appearance_points
+        + performance_component * sample_confidence
+    )
+
+    expected_points *= form_modifier
+    expected_points *= vulnerability_modifier
+
+    # Sensible weekly ceiling.
+    expected_points = max(0.0, min(expected_points, 15.0))
+
+    return round(expected_points, 2)
 
 
-  df_players["predicted_gw_points"] = df_players.apply(
-      calculate_predicted_points, axis=1
-  )
+df_players["predicted_gw_points"] = df_players.apply(
+    calculate_predicted_points, axis=1
+)
 
 
   # --- 4. APPLY FILTERING ---
@@ -583,10 +683,9 @@ if df_players is not None:
       filtered_df = filtered_df[
           filtered_df["def_contrib_per_90"] >= min_def_contrib
       ]
-    # Fixed bug: properly filter bonus points per 90 using the bonus column, not bps
     if min_bonus > 0:
       filtered_df = filtered_df[
-          (filtered_df["bonus"] / filtered_df["minutes"] * 90) >= min_bonus
+          filtered_df["bonus_per_90"] >= min_bonus
       ]
 
   filtered_df["Player"] = (
