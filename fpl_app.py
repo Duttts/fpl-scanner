@@ -500,23 +500,22 @@ if df_players is not None:
 
 
   # --- PREDICTIVE MODEL CALCULATION ---
-def calculate_predicted_points(row):
-    """
-    Estimate expected FPL points for the player's next fixture.
+  def calculate_predicted_points(row):
+    """Estimate expected FPL points for the player's next fixture.
 
-    Uses attacking output, minutes reliability, position-specific
-    clean-sheet value, BPS/bonus potential, form, fixture difficulty,
-    and opponent vulnerability.
+    Uses attacking output, minutes reliability, position-specific clean-sheet
+    value, BPS/bonus potential, form, fixture difficulty, and opponent
+    vulnerability.
 
-    Small samples are dampened so one or two excellent appearances
-    do not automatically dominate the rankings.
+    Small samples are dampened so one or two excellent appearances do not
+    automatically dominate the rankings.
     """
 
     minutes = float(row.get("minutes", 0) or 0)
     position = str(row.get("position", "") or "")
 
     if minutes <= 0:
-        return 0.0
+      return 0.0
 
     # ---------------------------------------------------------
     # 1. SAMPLE / MINUTES RELIABILITY
@@ -524,9 +523,9 @@ def calculate_predicted_points(row):
     sample_confidence = min(minutes / 450.0, 1.0)
 
     if minutes < 180:
-        sample_confidence *= 0.70
+      sample_confidence *= 0.70
     elif minutes < 270:
-        sample_confidence *= 0.85
+      sample_confidence *= 0.85
 
     # ---------------------------------------------------------
     # 2. EXPECTED ATTACKING OUTPUT
@@ -534,11 +533,11 @@ def calculate_predicted_points(row):
     xgi_p90 = float(row.get("xgi_per_90", 0) or 0)
 
     if position in ("Forward", "Midfielder"):
-        attacking_points = xgi_p90 * 4.0
+      attacking_points = xgi_p90 * 4.0
     elif position == "Defender":
-        attacking_points = xgi_p90 * 3.5
+      attacking_points = xgi_p90 * 3.5
     else:  # Goalkeeper
-        attacking_points = xgi_p90 * 3.0
+      attacking_points = xgi_p90 * 3.0
 
     # Prevent extreme small-sample xGI from dominating.
     attacking_points = min(attacking_points, 4.5)
@@ -557,13 +556,13 @@ def calculate_predicted_points(row):
     fixture_quality = max(0.0, min(1.0, (5.0 - fdr) / 4.0))
 
     if position == "Defender":
-        clean_sheet_points = 4.0 * fixture_quality
+      clean_sheet_points = 4.0 * fixture_quality
     elif position == "Goalkeeper":
-        clean_sheet_points = 4.0 * fixture_quality
+      clean_sheet_points = 4.0 * fixture_quality
     elif position == "Midfielder":
-        clean_sheet_points = 1.0 * fixture_quality
+      clean_sheet_points = 1.0 * fixture_quality
     else:
-        clean_sheet_points = 0.0
+      clean_sheet_points = 0.0
 
     # ---------------------------------------------------------
     # 5. BONUS / BPS SIGNAL
@@ -579,41 +578,35 @@ def calculate_predicted_points(row):
     form_value = float(row.get("form", 0) or 0)
 
     if form_value >= 8:
-        form_modifier = 1.08
+      form_modifier = 1.08
     elif form_value >= 6:
-        form_modifier = 1.04
+      form_modifier = 1.04
     elif form_value < 3:
-        form_modifier = 0.94
+      form_modifier = 0.94
     elif form_value < 4:
-        form_modifier = 0.97
+      form_modifier = 0.97
     else:
-        form_modifier = 1.00
+      form_modifier = 1.00
 
     # ---------------------------------------------------------
     # 7. OPPONENT VULNERABILITY
     # ---------------------------------------------------------
-    vulnerability = float(
-        row.get("opponent_vulnerability", 1.0) or 1.0
-    )
+    vulnerability = float(row.get("opponent_vulnerability", 1.0) or 1.0)
 
     vulnerability_modifier = max(
-        0.90,
-        min(1.15, 0.95 + (vulnerability * 0.05))
+        0.90, min(1.15, 0.95 + (vulnerability * 0.05))
     )
 
     # ---------------------------------------------------------
     # 8. BUILD EXPECTED SCORE
     # ---------------------------------------------------------
     performance_component = (
-        attacking_points
-        + clean_sheet_points
-        + bonus_component
+        attacking_points + clean_sheet_points + bonus_component
     )
 
     # Conservative adjustment for limited samples.
     expected_points = (
-        appearance_points
-        + performance_component * sample_confidence
+        appearance_points + performance_component * sample_confidence
     )
 
     expected_points *= form_modifier
@@ -624,11 +617,9 @@ def calculate_predicted_points(row):
 
     return round(expected_points, 2)
 
-
-df_players["predicted_gw_points"] = df_players.apply(
-    calculate_predicted_points, axis=1
-)
-
+  df_players["predicted_gw_points"] = df_players.apply(
+      calculate_predicted_points, axis=1
+  )
 
   # --- 4. APPLY FILTERING ---
   filtered_df = df_players.copy()
@@ -684,9 +675,7 @@ df_players["predicted_gw_points"] = df_players.apply(
           filtered_df["def_contrib_per_90"] >= min_def_contrib
       ]
     if min_bonus > 0:
-      filtered_df = filtered_df[
-          filtered_df["bonus_per_90"] >= min_bonus
-      ]
+      filtered_df = filtered_df[filtered_df["bonus_per_90"] >= min_bonus]
 
   filtered_df["Player"] = (
       filtered_df["first_name"] + " " + filtered_df["second_name"]
