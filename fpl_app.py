@@ -571,9 +571,7 @@ if df_players is not None:
         expected_points = (
             appearance_points + performance_component * sample_confidence
         )
-
-        expected_points *= form_modifier
-        expected_points *= vulnerability_modifier
+        
         expected_points = max(0.0, min(expected_points, 15.0))
 
         return round(expected_points, 2)
