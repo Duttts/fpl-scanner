@@ -80,7 +80,15 @@ if df_players is not None:
     # Call defensive metric builder right after loading bootstrap data (Fix #3)
     df_players = build_defensive_metric(df_players)
 
-
+# Helper function to fetch the user's current FPL team
+@st.cache_data(ttl=3600)
+def fetch_user_team(manager_id, current_gw=1):
+  url = f"https://fantasy.premierleague.com/api/entry/{manager_id}/event/{current_gw}/picks/"
+  r = requests.get(url, timeout=15)
+  if r.status_code == 200:
+    picks_data = r.json().get("picks", [])
+    return [p["element"] for p in picks_data]
+  return []
 # Helper function to fetch rolling last-X-gameweeks data correctly (handling DGWs/BGWs)
 @st.cache_data(ttl=3600)
 def fetch_rolling_data(player_ids, num_gameweeks=5):
@@ -761,3 +769,67 @@ if df_players is not None:
             "No players match this exact combination of filters. Try loosening your"
             " thresholds."
         )
+# --- YOUR TEAM INTEGRATION & TRANSFER SUGGESTIONS ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("🎯 Your Team Integration")
+manager_id = st.sidebar.text_input("Enter your FPL Manager ID:")
+
+if manager_id and df_players is not None:
+  try:
+    my_player_ids = fetch_user_team(int(manager_id))
+
+    if my_player_ids:
+      my_squad_df = df_players[df_players["id"].isin(my_player_ids)]
+
+      st.markdown("---")
+      st.subheader("📋 Your Loaded Squad Audit")
+      st.dataframe(
+          my_squad_df[
+              [
+                  "Player",
+                  "team_name",
+                  "position",
+                  "now_cost",
+                  "predicted_gw_points",
+                  "opponent_vulnerability",
+              ]
+          ],
+          use_container_width=True,
+      )
+
+      st.subheader("💡 Recommended Transfer Targets")
+
+      weakest_starter = (
+          my_squad_df.sort_values(by="predicted_gw_points", ascending=True)
+          .iloc[0]
+      )
+
+      position_pool = df_players[
+          (df_players["position"] == weakest_starter["position"])
+          & (~df_players["id"].isin(my_player_ids))
+          & (df_players["now_cost"] <= weakest_starter["now_cost"] + 1.0)
+      ]
+
+      if not position_pool.empty:
+        best_target = position_pool.sort_values(
+            by="predicted_gw_points", ascending=False
+        ).iloc[0]
+        point_gain = round(
+            best_target["predicted_gw_points"]
+            - weakest_starter["predicted_gw_points"],
+            2,
+        )
+
+        st.success(
+            f"**Suggested Swap:** Transfer out **{weakest_starter['Player']}**"
+            f" ({weakest_starter['predicted_gw_points']} pts) $\\rightarrow$"
+            f" Bring in **{best_target['Player']}**"
+            f" ({best_target['predicted_gw_points']} pts) | **Expected Gain:"
+            f" +{point_gain} pts**"
+        )
+    else:
+      st.sidebar.error(
+          "Could not load team. Check if your Manager ID is correct."
+      )
+  except Exception as e:
+    st.sidebar.error("Error fetching team data.")
