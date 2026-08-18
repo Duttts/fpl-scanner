@@ -80,14 +80,26 @@ if df_players is not None:
     # Call defensive metric builder right after loading bootstrap data (Fix #3)
     df_players = build_defensive_metric(df_players)
 
-# Helper function to fetch the user's current FPL team
 @st.cache_data(ttl=3600)
 def fetch_user_team(manager_id, current_gw=1):
+  headers = {
+      "User-Agent": (
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,"
+          " like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+      )
+  }
+
+  # Try fetching picks for the specified gameweek
   url = f"https://fantasy.premierleague.com/api/entry/{manager_id}/event/{current_gw}/picks/"
-  r = requests.get(url, timeout=15)
-  if r.status_code == 200:
-    picks_data = r.json().get("picks", [])
-    return [p["element"] for p in picks_data]
+  try:
+    r = requests.get(url, headers=headers, timeout=15)
+    if r.status_code == 200:
+      picks_data = r.json().get("picks", [])
+      if picks_data:
+        return [p["element"] for p in picks_data]
+  except Exception:
+    pass
+
   return []
 # Helper function to fetch rolling last-X-gameweeks data correctly (handling DGWs/BGWs)
 @st.cache_data(ttl=3600)
