@@ -433,7 +433,6 @@ if df_players is not None:
         "bonus",
         "defensive_contributions",
         "opponent_vulnerability",
-        "form_trend_delta",
     ]
     for col in numeric_cols:
         if col in df_players.columns:
@@ -441,7 +440,11 @@ if df_players is not None:
                 0
             )
 
-    # --- FIX 2: Removed the lines overwriting form_status and form_trend_delta entirely ---
+    # Ensure form columns exist in season mode as defaults
+    if "form_status" not in df_players.columns:
+        df_players["form_status"] = "Stable ➡️"
+    if "form_trend_delta" not in df_players.columns:
+        df_players["form_trend_delta"] = 0.0
 
     if data_scope == "Last X Gameweeks":
         with st.spinner(
@@ -492,7 +495,6 @@ if df_players is not None:
         df_players["xgi_per_90"] = df_players.apply(lambda r: calc_per_90(r, "expected_goal_involvements"), axis=1)
         df_players["def_contrib_per_90"] = df_players.apply(lambda r: calc_per_90(r, "defensive_contributions"), axis=1)
     else:
-        # Fallback for Season Totals scope if per-90 cols are needed
         df_players["points_per_90"] = df_players.apply(lambda r: calc_per_90(r, "total_points"), axis=1)
         df_players["bps_per_90"] = df_players.apply(lambda r: calc_per_90(r, "bps"), axis=1)
         df_players["bonus_per_90"] = df_players.apply(lambda r: calc_per_90(r, "bonus"), axis=1)
@@ -505,75 +507,45 @@ if df_players is not None:
 
     # --- PREDICTIVE MODEL CALCULATION ---
     def calculate_predicted_points(row):
-        """Estimate expected FPL points for the player's next fixture.
-
-        Uses attacking output, minutes reliability, position-specific clean-sheet
-        value, BPS/bonus potential, form, fixture difficulty, and opponent
-        vulnerability.
-
-        Small samples are dampened so one or two excellent appearances do not
-        automatically dominate the rankings.
-        """
-
+        """Estimate expected FPL points for the player's next fixture."""
         minutes = float(row.get("minutes", 0) or 0)
         position = str(row.get("position", "") or "")
 
         if minutes <= 0:
             return 0.0
 
-        # ---------------------------------------------------------
-        # 1. SAMPLE / MINUTES RELIABILITY (FIX 5: Improved version)
-        # ---------------------------------------------------------
         sample_confidence = min(minutes / 450.0, 1.0)
         if minutes < 180:
-            sample_confidence *= 0.85   # was 0.70
+            sample_confidence *= 0.85
         elif minutes < 270:
-            sample_confidence *= 0.92   # was 0.85
+            sample_confidence *= 0.92
 
-        # ---------------------------------------------------------
-        # 2. EXPECTED ATTACKING OUTPUT (FIX 4: Improved cap)
-        # ---------------------------------------------------------
         xgi_p90 = float(row.get("xgi_per_90", 0) or 0)
 
         if position in ("Forward", "Midfielder"):
             attacking_points = xgi_p90 * 4.0
         elif position == "Defender":
             attacking_points = xgi_p90 * 3.5
-        else:  # Goalkeeper
+        else:
             attacking_points = xgi_p90 * 3.0
 
-        # Prevent extreme small-sample xGI from dominating.
-        attacking_points = min(attacking_points, 7.0)  # was 4.5
+        attacking_points = min(attacking_points, 7.0)
 
-        # ---------------------------------------------------------
-        # 3. APPEARANCE EXPECTATION
-        # ---------------------------------------------------------
         appearance_points = 1.0 + sample_confidence
 
-        # ---------------------------------------------------------
-        # 4. FIXTURE / CLEAN-SHEET EXPECTATION
-        # ---------------------------------------------------------
         fdr = float(row.get("dynamic_fdr", 3.0) or 3.0)
         fixture_quality = max(0.0, min(1.0, (5.0 - fdr) / 4.0))
 
-        if position == "Defender":
-            clean_sheet_points = 4.0 * fixture_quality
-        elif position == "Goalkeeper":
+        if position in ("Defender", "Goalkeeper"):
             clean_sheet_points = 4.0 * fixture_quality
         elif position == "Midfielder":
             clean_sheet_points = 1.0 * fixture_quality
         else:
             clean_sheet_points = 0.0
 
-        # ---------------------------------------------------------
-        # 5. BONUS / BPS SIGNAL
-        # ---------------------------------------------------------
         bps_p90 = float(row.get("bps_per_90", 0) or 0)
         bonus_component = min(1.5, max(0.0, bps_p90 / 100.0))
 
-        # ---------------------------------------------------------
-        # 6. FORM = SMALL MODIFIER
-        # ---------------------------------------------------------
         form_value = float(row.get("form", 0) or 0)
 
         if form_value >= 8:
@@ -587,18 +559,11 @@ if df_players is not None:
         else:
             form_modifier = 1.00
 
-        # ---------------------------------------------------------
-        # 7. OPPONENT VULNERABILITY
-        # ---------------------------------------------------------
         vulnerability = float(row.get("opponent_vulnerability", 1.0) or 1.0)
-
         vulnerability_modifier = max(
             0.90, min(1.15, 0.95 + (vulnerability * 0.05))
         )
 
-        # ---------------------------------------------------------
-        # 8. BUILD EXPECTED SCORE
-        # ---------------------------------------------------------
         performance_component = (
             attacking_points + clean_sheet_points + bonus_component
         )
@@ -609,7 +574,6 @@ if df_players is not None:
 
         expected_points *= form_modifier
         expected_points *= vulnerability_modifier
-
         expected_points = max(0.0, min(expected_points, 15.0))
 
         return round(expected_points, 2)
@@ -650,12 +614,10 @@ if df_players is not None:
             filtered_df = filtered_df[
                 filtered_df["defensive_contributions"] >= min_def_contrib
             ]
-        # --- FIX 8: Bonus/BPS filtering safety check ---
-        if metric_mode == "Total Accumulation":
-            if "bonus" in filtered_df.columns and min_bonus > 0:
-                filtered_df = filtered_df[filtered_df["bonus"] >= min_bonus]
-            if "bps" in filtered_df.columns and min_bps > 0:
-                filtered_df = filtered_df[filtered_df["bps"] >= min_bps]
+        if "bonus" in filtered_df.columns and min_bonus > 0:
+            filtered_df = filtered_df[filtered_df["bonus"] >= min_bonus]
+        if "bps" in filtered_df.columns and min_bps > 0:
+            filtered_df = filtered_df[filtered_df["bps"] >= min_bps]
     else:
         if min_influence > 0:
             filtered_df = filtered_df[
@@ -685,7 +647,6 @@ if df_players is not None:
         st.markdown("---")
         kpi1, kpi2, kpi3 = st.columns(3)
 
-        # 1. Top Predicted Scorer
         top_scorer = filtered_df.sort_values(
             by="predicted_gw_points", ascending=False
         ).iloc[0]
@@ -695,7 +656,6 @@ if df_players is not None:
             f"{top_scorer['predicted_gw_points']} pts",
         )
 
-        # 2. Top Budget Pick (<= £6.5m)
         budget_pool = filtered_df[filtered_df["now_cost"] <= 6.5]
         if not budget_pool.empty:
             best_budget = budget_pool.sort_values(
@@ -709,7 +669,6 @@ if df_players is not None:
         else:
             kpi2.metric("💎 Top Budget Pick", "None in filter", "0 pts")
 
-        # 3. Softest Opponent Target
         if "opponent_vulnerability" in filtered_df.columns:
             softest_def = filtered_df.sort_values(
                 by="opponent_vulnerability", ascending=False
@@ -726,7 +685,7 @@ if df_players is not None:
             )
         st.markdown("---")
 
-    display_columns = [
+    desired_display_columns = [
         "Player",
         "team_name",
         "position",
@@ -748,6 +707,9 @@ if df_players is not None:
         "minutes",
         "selected_by_percent",
     ]
+
+    # Safely select only columns that actually exist in filtered_df
+    display_columns = [col for col in desired_display_columns if col in filtered_df.columns]
 
     filtered_df = filtered_df.sort_values(
         by=["predicted_gw_points", "form"], ascending=[False, False]
