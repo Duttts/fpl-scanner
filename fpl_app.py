@@ -51,7 +51,7 @@ with st.spinner("Connecting to live FPL data & fixture feed..."):
     df_players, fixtures, teams_df, raw_data = load_fpl_data()
 
 
-# --- FIX 3: IMPROVED COMPOSITE DEFENSIVE METRIC BUILDER ---
+# --- DEFENSIVE METRIC BUILDER ---
 def build_defensive_metric(df):
     defensive_cols = [
         "clearances_blocks_interceptions",
@@ -77,31 +77,31 @@ def build_defensive_metric(df):
 
 
 if df_players is not None:
-    # Call defensive metric builder right after loading bootstrap data (Fix #3)
     df_players = build_defensive_metric(df_players)
+
 
 @st.cache_data(ttl=3600)
 def fetch_user_team(manager_id, current_gw=1):
-  headers = {
-      "User-Agent": (
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,"
-          " like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-      )
-  }
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,"
+            " like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        )
+    }
 
-  # Try fetching picks for the specified gameweek
-  url = f"https://fantasy.premierleague.com/api/entry/{manager_id}/event/{current_gw}/picks/"
-  try:
-    r = requests.get(url, headers=headers, timeout=15)
-    if r.status_code == 200:
-      picks_data = r.json().get("picks", [])
-      if picks_data:
-        return [p["element"] for p in picks_data]
-  except Exception:
-    pass
+    url = f"https://fantasy.premierleague.com/api/entry/{manager_id}/event/{current_gw}/picks/"
+    try:
+        r = requests.get(url, headers=headers, timeout=15)
+        if r.status_code == 200:
+            picks_data = r.json().get("picks", [])
+            if picks_data:
+                return [p["element"] for p in picks_data]
+    except Exception:
+        pass
 
-  return []
-# Helper function to fetch rolling last-X-gameweeks data correctly (handling DGWs/BGWs)
+    return []
+
+
 @st.cache_data(ttl=3600)
 def fetch_rolling_data(player_ids, num_gameweeks=5):
     rolling_records = []
@@ -114,7 +114,6 @@ def fetch_rolling_data(player_ids, num_gameweeks=5):
             if r.status_code == 200:
                 history = r.json().get("history", [])
                 if history:
-                    # Group matches by actual FPL round (Gameweek) to properly handle Double Gameweeks
                     gw_groups = {}
                     for match in history:
                         gw = match.get("round")
@@ -123,7 +122,6 @@ def fetch_rolling_data(player_ids, num_gameweeks=5):
                                 gw_groups[gw] = []
                             gw_groups[gw].append(match)
 
-                    # Sort completed gameweeks chronologically and take the last X gameweeks
                     sorted_gws = sorted(gw_groups.keys())
                     recent_gw_keys = sorted_gws[-num_gameweeks:]
 
@@ -166,7 +164,6 @@ def fetch_rolling_data(player_ids, num_gameweeks=5):
                                 sum_def += int(g.get(def_key, 0) or 0)
                                 break
 
-                    # --- FORM MOMENTUM / TREND DELTA CALCULATION ---
                     form_trend_val = 0.0
                     form_status = "Stable ➡️"
 
@@ -237,13 +234,9 @@ def fetch_rolling_data(player_ids, num_gameweeks=5):
     return pd.DataFrame()
 
 
-# --- FIX 1: RECENT OPPONENT VULNERABILITY HELPER FUNCTION ---
 def calculate_recent_opponent_vulnerability(
     opponent_id, fixtures_list, window=5
 ):
-    """Calculates an opponent's defensive vulnerability based strictly
-    on their last completed matches within the given rolling window.
-    """
     if not opponent_id or not fixtures_list:
         return 1.0
 
@@ -265,9 +258,9 @@ def calculate_recent_opponent_vulnerability(
     total_conceded = 0
     for match in recent_matches:
         if match["team_h"] == opponent_id:
-            total_conceded += match["team_a_score"]  # FIXED
+            total_conceded += match["team_a_score"]
         else:
-            total_conceded += match["team_h_score"]  # FIXED
+            total_conceded += match["team_h_score"]
 
     conceded_per_match = total_conceded / len(recent_matches)
     vulnerability_score = conceded_per_match / 1.3
@@ -279,7 +272,6 @@ if df_players is not None:
     # --- 3. SIDEBAR CONTROL PANEL ---
     st.sidebar.header("🔍 Filter Parameters")
 
-    # --- DATA SCOPE & FILTERS ---
     scope_options = ["Season Totals", "Last X Gameweeks"]
     data_scope = st.sidebar.radio("Data Scope", options=scope_options)
 
@@ -288,6 +280,10 @@ if df_players is not None:
         rolling_window_size = st.sidebar.slider(
             "Gameweek Window Size", min_value=1, max_value=10, value=5, step=1
         )
+        # --- NEW: Dynamic target sample minutes based on window size ---
+        target_sample_mins = rolling_window_size * 90.0
+    else:
+        target_sample_mins = 450.0
 
     positions = ["All"] + list(df_players["position"].unique())
     selected_position = st.sidebar.selectbox("Position", positions)
@@ -315,7 +311,6 @@ if df_players is not None:
         step=1,
     )
 
-    # --- MAP UPCOMING OPPONENT & FDR ---
     team_fdr_map = {}
     next_opponent_map = {}
     team_short_name_map = teams_df.set_index("id")["short_name"].to_dict()
@@ -327,7 +322,6 @@ if df_players is not None:
             if (f["team_h"] == team_id or f["team_a"] == team_id)
             and not f["finished"]
         ]
-        # Explicitly sort upcoming fixtures by event/gameweek
         team_fixtures = sorted(team_fixtures, key=lambda x: x.get("event", 999))
         next_fixtures = team_fixtures[:fixture_horizon]
 
@@ -460,7 +454,6 @@ if df_players is not None:
                 0
             )
 
-    # Ensure form columns exist in season mode as defaults
     if "form_status" not in df_players.columns:
         df_players["form_status"] = "Stable ➡️"
     if "form_trend_delta" not in df_players.columns:
@@ -470,7 +463,6 @@ if df_players is not None:
         with st.spinner(
             f"Fetching last {rolling_window_size} completed gameweeks data..."
         ):
-            # --- FIX 7: Only fetch rolling data for relevant players with minutes > 0 ---
             ids_to_fetch = df_players[df_players["minutes"] > 0]["id"].tolist()
             rolling_df = fetch_rolling_data(
                 ids_to_fetch, num_gameweeks=rolling_window_size
@@ -504,40 +496,30 @@ if df_players is not None:
             else 0.0
         )
 
-    # --- FIX 6: Only compute per-90 values when rolling mode is active ---
-    if data_scope == "Last X Gameweeks":
-        df_players["points_per_90"] = df_players.apply(lambda r: calc_per_90(r, "total_points"), axis=1)
-        df_players["bps_per_90"] = df_players.apply(lambda r: calc_per_90(r, "bps"), axis=1)
-        df_players["bonus_per_90"] = df_players.apply(lambda r: calc_per_90(r, "bonus"), axis=1)
-        df_players["influence_per_90"] = df_players.apply(lambda r: calc_per_90(r, "influence"), axis=1)
-        df_players["threat_per_90"] = df_players.apply(lambda r: calc_per_90(r, "threat"), axis=1)
-        df_players["creativity_per_90"] = df_players.apply(lambda r: calc_per_90(r, "creativity"), axis=1)
-        df_players["xgi_per_90"] = df_players.apply(lambda r: calc_per_90(r, "expected_goal_involvements"), axis=1)
-        df_players["def_contrib_per_90"] = df_players.apply(lambda r: calc_per_90(r, "defensive_contributions"), axis=1)
-    else:
-        df_players["points_per_90"] = df_players.apply(lambda r: calc_per_90(r, "total_points"), axis=1)
-        df_players["bps_per_90"] = df_players.apply(lambda r: calc_per_90(r, "bps"), axis=1)
-        df_players["bonus_per_90"] = df_players.apply(lambda r: calc_per_90(r, "bonus"), axis=1)
-        df_players["influence_per_90"] = df_players.apply(lambda r: calc_per_90(r, "influence"), axis=1)
-        df_players["threat_per_90"] = df_players.apply(lambda r: calc_per_90(r, "threat"), axis=1)
-        df_players["creativity_per_90"] = df_players.apply(lambda r: calc_per_90(r, "creativity"), axis=1)
-        df_players["xgi_per_90"] = df_players.apply(lambda r: calc_per_90(r, "expected_goal_involvements"), axis=1)
-        df_players["def_contrib_per_90"] = df_players.apply(lambda r: calc_per_90(r, "defensive_contributions"), axis=1)
+    df_players["points_per_90"] = df_players.apply(lambda r: calc_per_90(r, "total_points"), axis=1)
+    df_players["bps_per_90"] = df_players.apply(lambda r: calc_per_90(r, "bps"), axis=1)
+    df_players["bonus_per_90"] = df_players.apply(lambda r: calc_per_90(r, "bonus"), axis=1)
+    df_players["influence_per_90"] = df_players.apply(lambda r: calc_per_90(r, "influence"), axis=1)
+    df_players["threat_per_90"] = df_players.apply(lambda r: calc_per_90(r, "threat"), axis=1)
+    df_players["creativity_per_90"] = df_players.apply(lambda r: calc_per_90(r, "creativity"), axis=1)
+    df_players["xgi_per_90"] = df_players.apply(lambda r: calc_per_90(r, "expected_goal_involvements"), axis=1)
+    df_players["def_contrib_per_90"] = df_players.apply(lambda r: calc_per_90(r, "defensive_contributions"), axis=1)
 
 
-    # --- PREDICTIVE MODEL CALCULATION ---
+    # --- PREDICTIVE MODEL CALCULATION (UPDATED WITH DYNAMIC DENOMINATOR & INFLUENCE) ---
     def calculate_predicted_points(row):
-        """Estimate expected FPL points for the player's next fixture."""
+        """Estimate expected FPL points incorporating dynamic confidence and influence."""
         minutes = float(row.get("minutes", 0) or 0)
         position = str(row.get("position", "") or "")
 
         if minutes <= 0:
             return 0.0
 
-        sample_confidence = min(minutes / 450.0, 1.0)
-        if minutes < 180:
+        # 1. Dynamic confidence using the sidebar-driven target sample minutes
+        sample_confidence = min(minutes / target_sample_mins, 1.0)
+        if minutes < (target_sample_mins * 0.4):
             sample_confidence *= 0.85
-        elif minutes < 270:
+        elif minutes < (target_sample_mins * 0.6):
             sample_confidence *= 0.92
 
         xgi_p90 = float(row.get("xgi_per_90", 0) or 0)
@@ -566,26 +548,13 @@ if df_players is not None:
         bps_p90 = float(row.get("bps_per_90", 0) or 0)
         bonus_component = min(1.5, max(0.0, bps_p90 / 100.0))
 
-        form_value = float(row.get("form", 0) or 0)
-
-        if form_value >= 8:
-            form_modifier = 1.08
-        elif form_value >= 6:
-            form_modifier = 1.04
-        elif form_value < 3:
-            form_modifier = 0.94
-        elif form_value < 4:
-            form_modifier = 0.97
-        else:
-            form_modifier = 1.00
-
-        vulnerability = float(row.get("opponent_vulnerability", 1.0) or 1.0)
-        vulnerability_modifier = max(
-            0.90, min(1.15, 0.95 + (vulnerability * 0.05))
-        )
+        # --- NEW: Influence Component Addition ---
+        influence_p90 = float(row.get("influence_per_90", 0) or 0)
+        # Scales influence into a minor point addition (up to ~1.0 point boost for elite match dictators)
+        influence_component = min(1.0, influence_p90 / 75.0)
 
         performance_component = (
-            attacking_points + clean_sheet_points + bonus_component
+            attacking_points + clean_sheet_points + bonus_component + influence_component
         )
 
         expected_points = (
@@ -726,7 +695,6 @@ if df_players is not None:
         "selected_by_percent",
     ]
 
-    # Safely select only columns that actually exist in filtered_df
     display_columns = [col for col in desired_display_columns if col in filtered_df.columns]
 
     filtered_df = filtered_df.sort_values(
@@ -768,7 +736,6 @@ if df_players is not None:
             selection_mode="multi-row",
         )
 
-        # --- 6. HEAD-TO-HEAD PLAYER COMPARISON ---
         selected_indices = event.selection.get("rows", [])
         if selected_indices:
             st.markdown("---")
@@ -781,6 +748,7 @@ if df_players is not None:
             "No players match this exact combination of filters. Try loosening your"
             " thresholds."
         )
+
 # --- YOUR TEAM INTEGRATION & TRANSFER SUGGESTIONS ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("🎯 Your Team Integration")
