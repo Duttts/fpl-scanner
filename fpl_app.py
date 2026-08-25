@@ -51,16 +51,13 @@ with st.spinner("Connecting to live FPL data & fixture feed..."):
     df_players, fixtures, teams_df, raw_data = load_fpl_data()
 
 
-# --- DEFENSIVE METRIC BUILDER ---
-# --- DEFENSIVE METRIC BUILDER (Fixed to match official FPL DEFCON / CBIT) ---
+# --- DEFENSIVE METRIC BUILDER (Using official FPL API field) ---
 def build_defensive_metric(df):
-    # Official FPL Defensive Contributions / DEFCON are driven primarily by CBIT (Clearances, Blocks & Interceptions)
-    col = "clearances_blocks_interceptions"
-    
-    if col not in df.columns:
-        df[col] = 0
-
-    df["defensive_contributions"] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+    # FPL natively provides 'defensive_contributions' in the element feed
+    if "defensive_contributions" not in df.columns:
+        df["defensive_contributions"] = 0
+    else:
+        df["defensive_contributions"] = pd.to_numeric(df["defensive_contributions"], errors="coerce").fillna(0)
 
     return df
 
