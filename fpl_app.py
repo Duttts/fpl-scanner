@@ -788,19 +788,10 @@ if df_players is not None:
             }
         )
 
-        event = st.dataframe(
+        st.dataframe(
             renamed_df,
             use_container_width=True,
-            on_select="rerun",
-            selection_mode="multi-row",
         )
-
-        selected_indices = event.selection.get("rows", [])
-        if selected_indices:
-            st.markdown("---")
-            st.subheader("⚔️ Head-to-Head Player Comparison")
-            comparison_df = renamed_df.iloc[selected_indices]
-            st.dataframe(comparison_df, use_container_width=True)
 
     else:
         st.warning(
