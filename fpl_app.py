@@ -1,5 +1,6 @@
 import json
 import os
+import concurrent.futures
 import pandas as pd
 import requests
 import streamlit as st
@@ -121,13 +122,9 @@ def fetch_user_team(manager_id):
     return []
 
 
-# --- SAFE MULTI-WEEK HORIZON FUNCTION (NEW) ---
+# --- SAFE MULTI-WEEK HORIZON FUNCTION ---
 @st.cache_data
 def get_safe_horizon_stats(team_id, fixtures_data, teams_data, target_gws=3):
-    """
-    Safely calculates opponent stats and summarizes upcoming opponents over 
-    a specified number of FPL gameweeks, handling blanks and double gameweeks.
-    """
     current_active_gw = 1
     try:
         current_active_gw = next(
@@ -138,8 +135,6 @@ def get_safe_horizon_stats(team_id, fixtures_data, teams_data, target_gws=3):
         pass
 
     end_gw = current_active_gw + target_gws - 1
-    total_threat = 0.0
-    fixture_count = 0
     opponent_display_list = []
     team_short_map = teams_data.set_index("id")["short_name"].to_dict() if hasattr(teams_data, "set_index") else {t["id"]: t["short_name"] for t in teams_data}
 
@@ -161,143 +156,126 @@ def get_safe_horizon_stats(team_id, fixtures_data, teams_data, target_gws=3):
             venue = "(H)" if is_home else "(A)"
             
             opponent_display_list.append(f"{opp_name} {venue}")
-            fixture_count += 1
 
     return {
         "fixtures_summary": ", ".join(opponent_display_list) if opponent_display_list else "No Fixtures"
     }
 
 
+# --- OPTIMIZED PARALLELIZED ROLLING DATA FETCH ---
 @st.cache_data(ttl=3600)
 def fetch_rolling_data(player_ids, num_gameweeks=5):
     rolling_records = []
-    for pid in player_ids:
+    
+    def fetch_player_history(pid):
         try:
             r = requests.get(
                 f"https://fantasy.premierleague.com/api/element-summary/{pid}/",
-                timeout=15,
+                timeout=10,
             )
             if r.status_code == 200:
                 history = r.json().get("history", [])
                 if history:
-                    gw_groups = {}
-                    for match in history:
-                        gw = match.get("round")
-                        if gw:
-                            if gw not in gw_groups:
-                                gw_groups[gw] = []
-                            gw_groups[gw].append(match)
-
-                    sorted_gws = sorted(gw_groups.keys())
-                    recent_gw_keys = sorted_gws[-num_gameweeks:]
-
-                    recent_matches = []
-                    for gw in recent_gw_keys:
-                        recent_matches.extend(gw_groups[gw])
-
-                    if not recent_matches:
-                        continue
-
-                    sum_mins = sum(int(g.get("minutes", 0) or 0) for g in recent_matches)
-                    sum_xg = sum(
-                        float(g.get("expected_goals", 0) or 0) for g in recent_matches
-                    )
-                    sum_xa = sum(
-                        float(g.get("expected_assists", 0) or 0) for g in recent_matches
-                    )
-                    sum_inf = sum(
-                        float(g.get("influence", 0) or 0) for g in recent_matches
-                    )
-                    sum_creat = sum(
-                        float(g.get("creativity", 0) or 0) for g in recent_matches
-                    )
-                    sum_threat = sum(
-                        float(g.get("threat", 0) or 0) for g in recent_matches
-                    )
-                    sum_pts = sum(
-                        int(g.get("total_points", 0) or 0) for g in recent_matches
-                    )
-                    sum_bps = sum(int(g.get("bps", 0) or 0) for g in recent_matches)
-                    sum_bonus = sum(int(g.get("bonus", 0) or 0) for g in recent_matches)
-
-                    sum_def = 0
-                    for g in recent_matches:
-                        for def_key in [
-                            "defensive_contributions",
-                            "clearances_blocks_interceptions",
-                        ]:
-                            if def_key in g:
-                                sum_def += int(g.get(def_key, 0) or 0)
-                                break
-
-                    form_trend_val = 0.0
-                    form_status = "Stable ➡️"
-
-                    if len(recent_gw_keys) >= 4:
-                        last_two_gws = recent_gw_keys[-2:]
-                        baseline_gws = recent_gw_keys[:-2]
-
-                        last_two_matches = [
-                            m for gw in last_two_gws for m in gw_groups[gw]
-                        ]
-                        baseline_matches = [
-                            m for gw in baseline_gws for m in gw_groups[gw]
-                        ]
-
-                        def get_composite_score(matches):
-                            n = len(matches)
-                            if n == 0:
-                                return 0.0
-                            xgi = (
-                                sum(
-                                    float(g.get("expected_goals", 0) or 0)
-                                    + float(g.get("expected_assists", 0) or 0)
-                                    for g in matches
-                                )
-                                / n
-                            )
-                            threat = (
-                                sum(float(g.get("threat", 0) or 0) for g in matches) / n
-                            ) / 100.0
-                            influence = (
-                                sum(float(g.get("influence", 0) or 0) for g in matches) / n
-                            ) / 100.0
-                            return (xgi * 0.5) + (threat * 0.3) + (influence * 0.2)
-
-                        recent_score = get_composite_score(last_two_matches)
-                        baseline_score = get_composite_score(baseline_matches)
-
-                        form_trend_val = round(recent_score - baseline_score, 2)
-
-                        if form_trend_val > 0.10:
-                            form_status = "Surging 📈"
-                        elif form_trend_val < -0.10:
-                            form_status = "Cooling 📉"
-                        else:
-                            form_status = "Stable ➡️"
-
-                    rolling_records.append({
-                        "id": pid,
-                        "minutes": sum_mins,
-                        "total_points": sum_pts,
-                        "expected_goals": sum_xg,
-                        "expected_assists": sum_xa,
-                        "expected_goal_involvements": sum_xg + sum_xa,
-                        "influence": sum_inf,
-                        "creativity": sum_creat,
-                        "threat": sum_threat,
-                        "bps": sum_bps,
-                        "bonus": sum_bonus,
-                        "defensive_contributions": sum_def,
-                        "form_trend_delta": form_trend_val,
-                        "form_status": form_status,
-                    })
+                    return pid, history
         except Exception:
+            pass
+        return pid, None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        results = list(executor.map(fetch_player_history, player_ids))
+
+    for pid, history in results:
+        if not history:
+            continue
+            
+        gw_groups = {}
+        for match in history:
+            gw = match.get("round")
+            if gw:
+                if gw not in gw_groups:
+                    gw_groups[gw] = []
+                gw_groups[gw].append(match)
+
+        sorted_gws = sorted(gw_groups.keys())
+        recent_gw_keys = sorted_gws[-num_gameweeks:]
+
+        recent_matches = [m for gw in recent_gw_keys for m in gw_groups[gw]]
+        if not recent_matches:
             continue
 
-    if rolling_records:
-        return pd.DataFrame(rolling_records)
-    return pd.DataFrame()
+        sum_mins = sum(int(g.get("minutes", 0) or 0) for g in recent_matches)
+        sum_xg = sum(float(g.get("expected_goals", 0) or 0) for g in recent_matches)
+        sum_xa = sum(float(g.get("expected_assists", 0) or 0) for g in recent_matches)
+        sum_inf = sum(float(g.get("influence", 0) or 0) for g in recent_matches)
+        sum_creat = sum(float(g.get("creativity", 0) or 0) for g in recent_matches)
+        sum_threat = sum(float(g.get("threat", 0) or 0) for g in recent_matches)
+        sum_pts = sum(int(g.get("total_points", 0) or 0) for g in recent_matches)
+        sum_bps = sum(int(g.get("bps", 0) or 0) for g in recent_matches)
+        sum_bonus = sum(int(g.get("bonus", 0) or 0) for g in recent_matches)
+
+        sum_def = 0
+        for g in recent_matches:
+            for def_key in ["defensive_contributions", "clearances_blocks_interceptions"]:
+                if def_key in g:
+                    sum_def += int(g.get(def_key, 0) or 0)
+                    break
+
+        form_trend_val = 0.0
+        form_status = "Stable ➡️"
+
+        if len(recent_gw_keys) >= 4:
+            last_two_gws = recent_gw_keys[-2:]
+            baseline_gws = recent_gw_keys[:-2]
+
+            last_two_matches = [m for gw in last_two_gws for m in gw_groups[gw]]
+            baseline_matches = [m for gw in baseline_gws for m in gw_groups[gw]]
+
+            def get_composite_score(matches):
+                n = len(matches)
+                if n == 0:
+                    return 0.0
+                xgi = (
+                    sum(
+                        float(g.get("expected_goals", 0) or 0)
+                        + float(g.get("expected_assists", 0) or 0)
+                        for g in matches
+                    )
+                    / n
+                )
+                threat = (sum(float(g.get("threat", 0) or 0) for g in matches) / n) / 100.0
+                influence = (sum(float(g.get("influence", 0) or 0) for g in matches) / n) / 100.0
+                return (xgi * 0.5) + (threat * 0.3) + (influence * 0.2)
+
+            recent_score = get_composite_score(last_two_matches)
+            baseline_score = get_composite_score(baseline_matches)
+
+            form_trend_val = round(recent_score - baseline_score, 2)
+
+            if form_trend_val > 0.10:
+                form_status = "Surging 📈"
+            elif form_trend_val < -0.10:
+                form_status = "Cooling 📉"
+            else:
+                form_status = "Stable ➡️"
+
+        rolling_records.append({
+            "id": pid,
+            "minutes": sum_mins,
+            "total_points": sum_pts,
+            "expected_goals": sum_xg,
+            "expected_assists": sum_xa,
+            "expected_goal_involvements": sum_xg + sum_xa,
+            "influence": sum_inf,
+            "creativity": sum_creat,
+            "threat": sum_threat,
+            "bps": sum_bps,
+            "bonus": sum_bonus,
+            "defensive_contributions": sum_def,
+            "form_trend_delta": form_trend_val,
+            "form_status": form_status,
+        })
+
+    return pd.DataFrame(rolling_records) if rolling_records else pd.DataFrame()
 
 
 def calculate_recent_opponent_vulnerability(
@@ -376,7 +354,6 @@ if df_players is not None:
         step=1,
     )
 
-    # --- NEW HORIZON SLIDER FOR MULTI-GW VIEW ---
     st.sidebar.subheader("📅 Lookahead Horizon Settings")
     gw_horizon = st.sidebar.slider(
         "Lookahead Gameweeks", 
@@ -434,7 +411,6 @@ if df_players is not None:
         axis=1,
     )
 
-    # Apply safe horizon summary per player team using the selected `gw_horizon`
     horizon_summaries = []
     for team_id in df_players["team"]:
         h_data = get_safe_horizon_stats(team_id, fixtures, teams_df, target_gws=gw_horizon)
@@ -847,7 +823,6 @@ if manager_id and df_players is not None:
       st.markdown("---")
       st.subheader("📋 Your Loaded Squad Audit")
       
-      # Recompute or map fixtures string for squad df if needed
       squad_display_cols = [
           "Player",
           "team_name",
