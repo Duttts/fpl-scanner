@@ -1,6 +1,5 @@
 import json
 import os
-import concurrent.futures
 import pandas as pd
 import requests
 import streamlit as st
@@ -82,24 +81,13 @@ if df_players is not None:
 
 
 @st.cache_data(ttl=3600)
-def fetch_user_team(manager_id):
+def fetch_user_team(manager_id, current_gw=1):
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,"
             " like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         )
     }
-
-    current_gw = 1
-    try:
-        events = raw_data.get("events", [])
-        for ev in events:
-            if ev.get("is_current") or ev.get("is_next"):
-                current_gw = ev.get("id")
-                if ev.get("is_current"):
-                    break 
-    except Exception:
-        pass
 
     url = f"https://fantasy.premierleague.com/api/entry/{manager_id}/event/{current_gw}/picks/"
     try:
@@ -108,181 +96,149 @@ def fetch_user_team(manager_id):
             picks_data = r.json().get("picks", [])
             if picks_data:
                 return [p["element"] for p in picks_data]
-        
-        if current_gw > 1:
-            url_gw1 = f"https://fantasy.premierleague.com/api/entry/{manager_id}/event/1/picks/"
-            r1 = requests.get(url_gw1, headers=headers, timeout=15)
-            if r1.status_code == 200:
-                picks_data1 = r1.json().get("picks", [])
-                if picks_data1:
-                    return [p["element"] for p in picks_data1]
     except Exception:
         pass
 
     return []
 
 
-# --- SAFE MULTI-WEEK HORIZON FUNCTION ---
-@st.cache_data
-def get_safe_horizon_stats(team_id, fixtures_data, teams_data, target_gws=3):
-    current_active_gw = 1
-    try:
-        current_active_gw = next(
-            (f["event"] for f in fixtures_data if not f.get("finished") and f.get("event") is not None), 
-            1
-        )
-    except Exception:
-        pass
-
-    end_gw = current_active_gw + target_gws - 1
-    opponent_display_list = []
-    team_short_map = teams_data.set_index("id")["short_name"].to_dict() if hasattr(teams_data, "set_index") else {t["id"]: t["short_name"] for t in teams_data}
-
-    for gw in range(current_active_gw, end_gw + 1):
-        gw_fixtures = [
-            f for f in fixtures_data 
-            if f.get("event") == gw and (f["team_h"] == team_id or f["team_a"] == team_id)
-        ]
-        
-        if not gw_fixtures:
-            opponent_display_list.append(f"GW{gw}: [Blank]")
-            continue
-            
-        for fix in gw_fixtures:
-            is_home = fix["team_h"] == team_id
-            opp_id = fix["team_a"] if is_home else fix["team_h"]
-            
-            opp_name = team_short_map.get(opp_id, "Unknown")
-            venue = "(H)" if is_home else "(A)"
-            
-            opponent_display_list.append(f"{opp_name} {venue}")
-
-    return {
-        "fixtures_summary": ", ".join(opponent_display_list) if opponent_display_list else "No Fixtures"
-    }
-
-
-# --- OPTIMIZED PARALLELIZED ROLLING DATA FETCH ---
 @st.cache_data(ttl=3600)
 def fetch_rolling_data(player_ids, num_gameweeks=5):
     rolling_records = []
-    
-    def fetch_player_history(pid):
+    for pid in player_ids:
         try:
             r = requests.get(
                 f"https://fantasy.premierleague.com/api/element-summary/{pid}/",
-                timeout=10,
+                timeout=15,
             )
             if r.status_code == 200:
                 history = r.json().get("history", [])
                 if history:
-                    return pid, history
-        except Exception:
-            pass
-        return pid, None
+                    gw_groups = {}
+                    for match in history:
+                        gw = match.get("round")
+                        if gw:
+                            if gw not in gw_groups:
+                                gw_groups[gw] = []
+                            gw_groups[gw].append(match)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        results = list(executor.map(fetch_player_history, player_ids))
+                    sorted_gws = sorted(gw_groups.keys())
+                    recent_gw_keys = sorted_gws[-num_gameweeks:]
 
-    for pid, history in results:
-        if not history:
-            continue
-            
-        gw_groups = {}
-        for match in history:
-            gw = match.get("round")
-            if gw:
-                if gw not in gw_groups:
-                    gw_groups[gw] = []
-                gw_groups[gw].append(match)
+                    recent_matches = []
+                    for gw in recent_gw_keys:
+                        recent_matches.extend(gw_groups[gw])
 
-        sorted_gws = sorted(gw_groups.keys())
-        recent_gw_keys = sorted_gws[-num_gameweeks:]
+                    if not recent_matches:
+                        continue
 
-        recent_matches = [m for gw in recent_gw_keys for m in gw_groups[gw]]
-        if not recent_matches:
-            continue
-
-        sum_mins = sum(int(g.get("minutes", 0) or 0) for g in recent_matches)
-        sum_xg = sum(float(g.get("expected_goals", 0) or 0) for g in recent_matches)
-        sum_xa = sum(float(g.get("expected_assists", 0) or 0) for g in recent_matches)
-        sum_inf = sum(float(g.get("influence", 0) or 0) for g in recent_matches)
-        sum_creat = sum(float(g.get("creativity", 0) or 0) for g in recent_matches)
-        sum_threat = sum(float(g.get("threat", 0) or 0) for g in recent_matches)
-        sum_pts = sum(int(g.get("total_points", 0) or 0) for g in recent_matches)
-        sum_bps = sum(int(g.get("bps", 0) or 0) for g in recent_matches)
-        sum_bonus = sum(int(g.get("bonus", 0) or 0) for g in recent_matches)
-
-        sum_def = 0
-        for g in recent_matches:
-            for def_key in ["defensive_contributions", "clearances_blocks_interceptions"]:
-                if def_key in g:
-                    sum_def += int(g.get(def_key, 0) or 0)
-                    break
-
-        form_trend_val = 0.0
-        form_status = "Stable ➡️"
-
-        if len(recent_gw_keys) >= 4:
-            last_two_gws = recent_gw_keys[-2:]
-            baseline_gws = recent_gw_keys[:-2]
-
-            last_two_matches = [m for gw in last_two_gws for m in gw_groups[gw]]
-            baseline_matches = [m for gw in baseline_gws for m in gw_groups[gw]]
-
-            def get_composite_score(matches):
-                n = len(matches)
-                if n == 0:
-                    return 0.0
-                xgi = (
-                    sum(
-                        float(g.get("expected_goals", 0) or 0)
-                        + float(g.get("expected_assists", 0) or 0)
-                        for g in matches
+                    sum_mins = sum(int(g.get("minutes", 0) or 0) for g in recent_matches)
+                    sum_xg = sum(
+                        float(g.get("expected_goals", 0) or 0) for g in recent_matches
                     )
-                    / n
-                )
-                threat = (sum(float(g.get("threat", 0) or 0) for g in matches) / n) / 100.0
-                influence = (sum(float(g.get("influence", 0) or 0) for g in matches) / n) / 100.0
-                return (xgi * 0.5) + (threat * 0.3) + (influence * 0.2)
+                    sum_xa = sum(
+                        float(g.get("expected_assists", 0) or 0) for g in recent_matches
+                    )
+                    sum_inf = sum(
+                        float(g.get("influence", 0) or 0) for g in recent_matches
+                    )
+                    sum_creat = sum(
+                        float(g.get("creativity", 0) or 0) for g in recent_matches
+                    )
+                    sum_threat = sum(
+                        float(g.get("threat", 0) or 0) for g in recent_matches
+                    )
+                    sum_pts = sum(
+                        int(g.get("total_points", 0) or 0) for g in recent_matches
+                    )
+                    sum_bps = sum(int(g.get("bps", 0) or 0) for g in recent_matches)
+                    sum_bonus = sum(int(g.get("bonus", 0) or 0) for g in recent_matches)
 
-            recent_score = get_composite_score(last_two_matches)
-            baseline_score = get_composite_score(baseline_matches)
+                    sum_def = 0
+                    for g in recent_matches:
+                        for def_key in [
+                            "defensive_contributions",
+                            "clearances_blocks_interceptions",
+                        ]:
+                            if def_key in g:
+                                sum_def += int(g.get(def_key, 0) or 0)
+                                break
 
-            form_trend_val = round(recent_score - baseline_score, 2)
+                    form_trend_val = 0.0
+                    form_status = "Stable ➡️"
 
-            if form_trend_val > 0.10:
-                form_status = "Surging 📈"
-            elif form_trend_val < -0.10:
-                form_status = "Cooling 📉"
-            else:
-                form_status = "Stable ➡️"
+                    if len(recent_gw_keys) >= 4:
+                        last_two_gws = recent_gw_keys[-2:]
+                        baseline_gws = recent_gw_keys[:-2]
 
-        rolling_records.append({
-            "id": pid,
-            "minutes": sum_mins,
-            "total_points": sum_pts,
-            "expected_goals": sum_xg,
-            "expected_assists": sum_xa,
-            "expected_goal_involvements": sum_xg + sum_xa,
-            "influence": sum_inf,
-            "creativity": sum_creat,
-            "threat": sum_threat,
-            "bps": sum_bps,
-            "bonus": sum_bonus,
-            "defensive_contributions": sum_def,
-            "form_trend_delta": form_trend_val,
-            "form_status": form_status,
-        })
+                        last_two_matches = [
+                            m for gw in last_two_gws for m in gw_groups[gw]
+                        ]
+                        baseline_matches = [
+                            m for gw in baseline_gws for m in gw_groups[gw]
+                        ]
 
-    return pd.DataFrame(rolling_records) if rolling_records else pd.DataFrame()
+                        def get_composite_score(matches):
+                            n = len(matches)
+                            if n == 0:
+                                return 0.0
+                            xgi = (
+                                sum(
+                                    float(g.get("expected_goals", 0) or 0)
+                                    + float(g.get("expected_assists", 0) or 0)
+                                    for g in matches
+                                )
+                                / n
+                            )
+                            threat = (
+                                sum(float(g.get("threat", 0) or 0) for g in matches) / n
+                            ) / 100.0
+                            influence = (
+                                sum(float(g.get("influence", 0) or 0) for g in matches) / n
+                            ) / 100.0
+                            return (xgi * 0.5) + (threat * 0.3) + (influence * 0.2)
+
+                        recent_score = get_composite_score(last_two_matches)
+                        baseline_score = get_composite_score(baseline_matches)
+
+                        form_trend_val = round(recent_score - baseline_score, 2)
+
+                        if form_trend_val > 0.10:
+                            form_status = "Surging 📈"
+                        elif form_trend_val < -0.10:
+                            form_status = "Cooling 📉"
+                        else:
+                            form_status = "Stable ➡️"
+
+                    rolling_records.append({
+                        "id": pid,
+                        "minutes": sum_mins,
+                        "total_points": sum_pts,
+                        "expected_goals": sum_xg,
+                        "expected_assists": sum_xa,
+                        "expected_goal_involvements": sum_xg + sum_xa,
+                        "influence": sum_inf,
+                        "creativity": sum_creat,
+                        "threat": sum_threat,
+                        "bps": sum_bps,
+                        "bonus": sum_bonus,
+                        "defensive_contributions": sum_def,
+                        "form_trend_delta": form_trend_val,
+                        "form_status": form_status,
+                    })
+        except Exception:
+            continue
+
+    if rolling_records:
+        return pd.DataFrame(rolling_records)
+    return pd.DataFrame()
 
 
-def calculate_recent_opponent_vulnerability(
+def calculate_recent_opponent_stats(
     opponent_id, fixtures_list, window=5
 ):
     if not opponent_id or not fixtures_list:
-        return 1.0
+        return 1.0, 0.0, 0.0
 
     opp_fixtures = [
         f for f in fixtures_list
@@ -291,25 +247,29 @@ def calculate_recent_opponent_vulnerability(
     ]
 
     if not opp_fixtures:
-        return 1.0
+        return 1.0, 0.0, 0.0
 
     opp_fixtures = sorted(opp_fixtures, key=lambda x: x.get("event", 0), reverse=True)
     recent_matches = opp_fixtures[:window]
 
     if not recent_matches:
-        return 1.0
+        return 1.0, 0.0, 0.0
 
     total_conceded = 0
+    total_scored = 0
     for match in recent_matches:
         if match["team_h"] == opponent_id:
             total_conceded += match["team_a_score"]
+            total_scored += match["team_h_score"]
         else:
             total_conceded += match["team_h_score"]
+            total_scored += match["team_a_score"]
 
     conceded_per_match = total_conceded / len(recent_matches)
+    scored_per_match = total_scored / len(recent_matches)
     vulnerability_score = conceded_per_match / 1.3
 
-    return round(vulnerability_score, 2)
+    return round(vulnerability_score, 2), round(scored_per_match, 2), round(conceded_per_match, 2)
 
 
 if df_players is not None:
@@ -354,16 +314,6 @@ if df_players is not None:
         step=1,
     )
 
-    st.sidebar.subheader("📅 Lookahead Horizon Settings")
-    gw_horizon = st.sidebar.slider(
-        "Lookahead Gameweeks", 
-        min_value=1, 
-        max_value=5, 
-        value=1, 
-        step=1,
-        help="Select how many upcoming gameweeks to display/average opponent fixtures over."
-    )
-
     team_fdr_map = {}
     next_opponent_map = {}
     team_short_name_map = teams_df.set_index("id")["short_name"].to_dict()
@@ -404,18 +354,16 @@ if df_players is not None:
         "upcoming_opponent_team_id"
     ].map(team_short_name_map)
 
-    df_players["opponent_vulnerability"] = df_players.apply(
-        lambda row: calculate_recent_opponent_vulnerability(
+    # Compute opponent vulnerability, goals scored, and goals conceded over window
+    opp_stats_list = df_players.apply(
+        lambda row: calculate_recent_opponent_stats(
             row.get("upcoming_opponent_team_id"), fixtures, rolling_window_size
         ),
         axis=1,
     )
-
-    horizon_summaries = []
-    for team_id in df_players["team"]:
-        h_data = get_safe_horizon_stats(team_id, fixtures, teams_df, target_gws=gw_horizon)
-        horizon_summaries.append(h_data["fixtures_summary"])
-    df_players["upcoming_fixtures_string"] = horizon_summaries
+    df_players["opponent_vulnerability"] = [x[0] for x in opp_stats_list]
+    df_players["opp_goals_scored_per_match"] = [x[1] for x in opp_stats_list]
+    df_players["opp_goals_conceded_per_match"] = [x[2] for x in opp_stats_list]
 
     max_fdr = st.sidebar.slider(
         f"Max Next {fixture_horizon} Fixture Difficulty (FDR)",
@@ -427,6 +375,10 @@ if df_players is not None:
 
     leaky_defenses_only = st.sidebar.checkbox(
         "🎯 Target Leaky Defenses Only (Vulnerability > 1.2)", value=False
+    )
+    
+    blunt_attacks_only = st.sidebar.checkbox(
+        "🛡️ Target Blunt Opponent Attacks Only (Opp. Goals Scored < 1.0)", value=False
     )
 
     min_minutes = st.sidebar.number_input(
@@ -506,6 +458,8 @@ if df_players is not None:
         "bonus",
         "defensive_contributions",
         "opponent_vulnerability",
+        "opp_goals_scored_per_match",
+        "opp_goals_conceded_per_match",
     ]
     for col in numeric_cols:
         if col in df_players.columns:
@@ -635,6 +589,9 @@ if df_players is not None:
 
     if leaky_defenses_only:
         filtered_df = filtered_df[filtered_df["opponent_vulnerability"] > 1.2]
+        
+    if blunt_attacks_only:
+        filtered_df = filtered_df[filtered_df["opp_goals_scored_per_match"] < 1.0]
 
     if min_minutes > 0:
         filtered_df = filtered_df[filtered_df["minutes"] >= min_minutes]
@@ -666,9 +623,7 @@ if df_players is not None:
                 filtered_df["influence_per_90"] >= min_influence
             ]
         if min_threat > 0:
-            filtered_df = filtered_df[
-                filtered_df["threat_per_90"] >= min_threat
-            ]
+            filtered_df = filtered_df[filtered_df["threat_per_90"] >= min_threat]
         if min_creativity > 0:
             filtered_df = filtered_df[
                 filtered_df["creativity_per_90"] >= min_creativity
@@ -735,10 +690,11 @@ if df_players is not None:
         "position",
         "now_cost",
         "predicted_gw_points",
-        "upcoming_fixtures_string",
         "form_status",
         "form_trend_delta",
         "opponent_vulnerability",
+        "opp_goals_scored_per_match",
+        "opp_goals_conceded_per_match",
         "dynamic_fdr",
         "form",
         "total_points",
@@ -769,10 +725,11 @@ if df_players is not None:
                 "position": "Pos",
                 "now_cost": "Price (£m)",
                 "predicted_gw_points": "Predicted GW Pts",
-                "upcoming_fixtures_string": f"Next {gw_horizon} GW Fixtures",
                 "form_status": "Form Trend",
                 "form_trend_delta": "Trend Delta (+/-)",
                 "opponent_vulnerability": "Opp. Vulnerability",
+                "opp_goals_scored_per_match": "Opp. Goals Scored (Last 5)",
+                "opp_goals_conceded_per_match": "Opp. Goals Conceded (Last 5)",
                 "dynamic_fdr": f"Next {fixture_horizon} FDR",
                 "form": "Form",
                 "total_points": "Points",
@@ -788,10 +745,19 @@ if df_players is not None:
             }
         )
 
-        st.dataframe(
+        event = st.dataframe(
             renamed_df,
             use_container_width=True,
+            on_select="rerun",
+            selection_mode="multi-row",
         )
+
+        selected_indices = event.selection.get("rows", [])
+        if selected_indices:
+            st.markdown("---")
+            st.subheader("⚔️ Head-to-Head Player Comparison")
+            comparison_df = renamed_df.iloc[selected_indices]
+            st.dataframe(comparison_df, use_container_width=True)
 
     else:
         st.warning(
@@ -813,26 +779,18 @@ if manager_id and df_players is not None:
 
       st.markdown("---")
       st.subheader("📋 Your Loaded Squad Audit")
-      
-      squad_display_cols = [
-          "Player",
-          "team_name",
-          "position",
-          "now_cost",
-          "predicted_gw_points",
-          "upcoming_fixtures_string",
-          "opponent_vulnerability",
-      ]
-      
       st.dataframe(
-          my_squad_df[squad_display_cols].rename(columns={
-              "team_name": "Team",
-              "position": "Pos",
-              "now_cost": "Price",
-              "predicted_gw_points": "Pred Pts",
-              "upcoming_fixtures_string": "Upcoming Fixtures",
-              "opponent_vulnerability": "Opp. Vulnerability"
-          }),
+          my_squad_df[
+              [
+                  "Player",
+                  "team_name",
+                  "position",
+                  "now_cost",
+                  "predicted_gw_points",
+                  "opponent_vulnerability",
+                  "opp_goals_scored_per_match",
+              ]
+          ],
           use_container_width=True,
       )
 
