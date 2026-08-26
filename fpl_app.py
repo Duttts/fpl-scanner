@@ -51,8 +51,7 @@ with st.spinner("Connecting to live FPL data & fixture feed..."):
     df_players, fixtures, teams_df, raw_data = load_fpl_data()
 
 
-# --- DEFENSIVE METRIC BUILDER (Using official FPL API field) ---
-# --- DEFENSIVE METRIC BUILDER (Fixed to match official FPL CBIT) ---
+# --- DEFENSIVE METRIC BUILDER ---
 def build_defensive_metric(df):
     col = "clearances_blocks_interceptions"
     
@@ -341,7 +340,6 @@ if df_players is not None:
         "upcoming_opponent_team_id"
     ].map(team_short_name_map)
 
-    # Compute opponent vulnerability, goals scored, and goals conceded over window
     opp_stats_list = df_players.apply(
         lambda row: calculate_recent_opponent_stats(
             row.get("upcoming_opponent_team_id"), fixtures, rolling_window_size
@@ -450,9 +448,7 @@ if df_players is not None:
     ]
     for col in numeric_cols:
         if col in df_players.columns:
-            df_players[col] = pd.to_numeric(df_players[col], errors="coerce").fillna(
-                0
-            )
+            df_players[col] = pd.to_numeric(df_players[col], errors="coerce").fillna(0)
 
     if "form_status" not in df_players.columns:
         df_players["form_status"] = "Stable ➡️"
@@ -488,6 +484,11 @@ if df_players is not None:
                 ]:
                     if col + "_rolling" in df_players.columns:
                         df_players[col] = df_players[col + "_rolling"].fillna(0)
+
+    # Bulletproof data cleaning for numeric fields prior to calculations
+    for c in ["minutes", "total_points", "expected_goal_involvements", "bps", "bonus", "influence", "threat", "creativity"]:
+        if c in df_players.columns:
+            df_players[c] = pd.to_numeric(df_players[c], errors="coerce").fillna(0)
 
     def calc_per_90(row, col_name):
         return (
