@@ -422,20 +422,23 @@ def calculate_predicted_points(row):
     fdr = float(row.get("dynamic_fdr", 3.0) or 3.0)
     fixture_quality = max(0.0, min(1.0, (5.0 - fdr) / 4.0))
 
-    # 2. Dynamic Team Defensive Strength
-    team_goals_conceded = float(row.get("opp_goals_conceded_per_match", 1.0) or 1.0) 
+    # 2. Opponent Attack Strength (Using Opponent Goals SCORED)
+    opp_goals_scored = float(row.get("opp_goals_scored_per_match", 1.0) or 1.0) 
 
-    if team_goals_conceded <= 0.8:
-        adjusted_fixture_quality = max(fixture_quality, 0.45)
-    elif team_goals_conceded >= 1.5:
-        adjusted_fixture_quality = min(fixture_quality, 0.35)
-    else:  # middle ground
-        adjusted_fixture_quality = fixture_quality
+    if opp_goals_scored <= 0.8:
+        attack_modifier = 1.20  # Blunt opponent attack = Great for clean sheets
+    elif opp_goals_scored >= 1.6:
+        attack_modifier = 0.80  # High-scoring opponent attack = Dangerous for clean sheets
+    else:
+        attack_modifier = 1.0
 
-    # 3. Clean Sheet Momentum Multiplier (Tuned for a noticeable gap)
+    # 3. Clean Sheet Momentum & Team Defensive Reliability
     clean_sheets = float(row.get("clean_sheets", 0) or 0)
-    cs_multiplier = 1.0 + (clean_sheets * 0.04)
-    cs_multiplier = max(1.0, min(1.50, cs_multiplier))
+    cs_momentum = 1.0 + (clean_sheets * 0.05)
+    cs_momentum = max(1.0, min(1.40, cs_momentum))
+
+    # Combine fixture quality with opponent attacking threat modifier
+    adjusted_fixture_quality = max(0.1, min(1.0, fixture_quality * attack_modifier))
 
     # 4. Position-Based Clean Sheet Value
     pos_upper = position.upper()
@@ -443,11 +446,11 @@ def calculate_predicted_points(row):
         max_cs_points = 4.0
     elif pos_upper in ["MID", "MIDFIELDER"]:
         max_cs_points = 1.0
-    else:  # FWD / Forwards
+    else:  # FWD
         max_cs_points = 0.0
 
-    # Final Clean Sheet Expected Points Calculation for this player
-    clean_sheet_points = max_cs_points * adjusted_fixture_quality * cs_multiplier
+    # Final Clean Sheet Expected Points Calculation
+    clean_sheet_points = max_cs_points * adjusted_fixture_quality * cs_momentum
 
     bps_p90 = float(row.get("bps_per_90", 0) or 0)
     bonus_component = min(1.5, max(0.0, bps_p90 / 100.0))
