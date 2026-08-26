@@ -135,6 +135,7 @@ def fetch_rolling_data(player_ids, num_gameweeks=5):
                     sum_pts = sum(int(g.get("total_points", 0) or 0) for g in recent_matches)
                     sum_bps = sum(int(g.get("bps", 0) or 0) for g in recent_matches)
                     sum_bonus = sum(int(g.get("bonus", 0) or 0) for g in recent_matches)
+                    sum_cs = sum(int(g.get("clean_sheets", 0) or 0) for g in recent_matches)
 
                     sum_def = 0
                     for g in recent_matches:
@@ -185,6 +186,7 @@ def fetch_rolling_data(player_ids, num_gameweeks=5):
                         "threat": sum_threat,
                         "bps": sum_bps,
                         "bonus": sum_bonus,
+                        "clean_sheets": sum_cs,
                         "defensive_contributions": sum_def,
                         "form_trend_delta": form_trend_val,
                         "form_status": form_status,
@@ -345,7 +347,7 @@ numeric_cols = [
     "now_cost", "total_points", "influence", "threat", "creativity",
     "selected_by_percent", "form", "expected_goals", "expected_assists",
     "expected_goal_involvements", "minutes", "dynamic_fdr", "bps", "bonus",
-    "defensive_contributions", "opponent_vulnerability",
+    "clean_sheets", "defensive_contributions", "opponent_vulnerability",
     "opp_goals_scored_per_match", "opp_goals_conceded_per_match",
 ]
 for col in numeric_cols:
@@ -368,12 +370,12 @@ if data_scope == "Last X Gameweeks":
             for col in [
                 "minutes", "total_points", "expected_goals", "expected_assists",
                 "expected_goal_involvements", "influence", "creativity", "threat",
-                "bps", "bonus", "defensive_contributions", "form_trend_delta", "form_status"
+                "bps", "bonus", "clean_sheets", "defensive_contributions", "form_trend_delta", "form_status"
             ]:
                 if col + "_rolling" in df_players.columns:
                     df_players[col] = df_players[col + "_rolling"].fillna(0)
 
-for c in ["minutes", "total_points", "expected_goal_involvements", "bps", "bonus", "influence", "threat", "creativity"]:
+for c in ["minutes", "total_points", "expected_goal_involvements", "bps", "bonus", "clean_sheets", "influence", "threat", "creativity"]:
     if c in df_players.columns:
         df_players[c] = pd.to_numeric(df_players[c], errors="coerce").fillna(0)
 
@@ -416,15 +418,36 @@ def calculate_predicted_points(row):
     attacking_points = min(attacking_points, 7.0)
     appearance_points = 1.0 + sample_confidence
 
+    # 1. Base FDR Calculation
     fdr = float(row.get("dynamic_fdr", 3.0) or 3.0)
     fixture_quality = max(0.0, min(1.0, (5.0 - fdr) / 4.0))
 
-    if position in ("Defender", "Goalkeeper"):
-        clean_sheet_points = 4.0 * fixture_quality
-    elif position == "Midfielder":
-        clean_sheet_points = 1.0 * fixture_quality
-    else:
-        clean_sheet_points = 0.0
+    # 2. Dynamic Team Defensive Strength
+    team_goals_conceded = float(row.get("opp_goals_conceded_per_match", 1.0) or 1.0) 
+
+    if team_goals_conceded <= 0.8:
+        adjusted_fixture_quality = max(fixture_quality, 0.45)
+    elif team_goals_conceded >= 1.5:
+        adjusted_fixture_quality = min(fixture_quality, 0.35)
+    else:  # middle ground
+        adjusted_fixture_quality = fixture_quality
+
+    # 3. Clean Sheet Momentum Multiplier (Tuned for a noticeable gap)
+    clean_sheets = float(row.get("clean_sheets", 0) or 0)
+    cs_multiplier = 1.0 + (clean_sheets * 0.04)
+    cs_multiplier = max(1.0, min(1.50, cs_multiplier))
+
+    # 4. Position-Based Clean Sheet Value
+    pos_upper = position.upper()
+    if pos_upper in ["GK", "DEF", "GOALKEEPER", "DEFENDER"]:
+        max_cs_points = 4.0
+    elif pos_upper in ["MID", "MIDFIELDER"]:
+        max_cs_points = 1.0
+    else:  # FWD / Forwards
+        max_cs_points = 0.0
+
+    # Final Clean Sheet Expected Points Calculation for this player
+    clean_sheet_points = max_cs_points * adjusted_fixture_quality * cs_multiplier
 
     bps_p90 = float(row.get("bps_per_90", 0) or 0)
     bonus_component = min(1.5, max(0.0, bps_p90 / 100.0))
@@ -528,7 +551,7 @@ desired_display_columns = [
     "form_status", "form_trend_delta", "opponent_vulnerability",
     "opp_goals_scored_per_match", "opp_goals_conceded_per_match", "dynamic_fdr",
     "form", "total_points", "points_per_90", "expected_goal_involvements",
-    "defensive_contributions", "threat", "creativity", "influence", "bonus",
+    "clean_sheets", "defensive_contributions", "threat", "creativity", "influence", "bonus",
     "minutes", "selected_by_percent",
 ]
 
@@ -555,6 +578,7 @@ if not filtered_df.empty:
             "total_points": "Points",
             "points_per_90": "Pts/90",
             "expected_goal_involvements": "xGI",
+            "clean_sheets": "Clean Sheets",
             "defensive_contributions": "Def Contrib",
             "threat": "Threat",
             "creativity": "Creativity",
