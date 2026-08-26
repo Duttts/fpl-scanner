@@ -234,6 +234,58 @@ def calculate_recent_opponent_stats(opponent_id, fixtures_list, window=5):
     return round(vulnerability_score, 2), round(scored_per_match, 2), round(conceded_per_match, 2)
 
 
+def calculate_next_3_opponents_stats(team_id, fixtures_list, teams_df, window=5):
+    if not team_id or not fixtures_list:
+        return 0.0, 0.0, "None"
+
+    team_fixtures = [
+        f for f in fixtures_list
+        if (f["team_h"] == team_id or f["team_a"] == team_id) and not f["finished"]
+    ]
+    team_fixtures = sorted(team_fixtures, key=lambda x: x.get("event", 999))
+    next_3_fixtures = team_fixtures[:3]
+
+    if not next_3_fixtures:
+        return 0.0, 0.0, "No fixtures"
+
+    opp_details = []
+    total_opp_scored = 0
+    total_opp_conceded = 0
+    count = 0
+
+    team_short_map = teams_df.set_index("id")["short_name"].to_dict()
+
+    for f in next_3_fixtures:
+        opp_id = f["team_a"] if f["team_h"] == team_id else f["team_h"]
+        opp_name = team_short_map.get(opp_id, "Unknown")
+        opp_details.append(opp_name)
+
+        opp_finished = [
+            fix for fix in fixtures_list
+            if (fix["team_h"] == opp_id or fix["team_a"] == opp_id) and fix["finished"]
+        ]
+        opp_finished = sorted(opp_finished, key=lambda x: x.get("event", 0), reverse=True)[:window]
+
+        if opp_finished:
+            scored_sum = sum(
+                (fix["team_h_score"] if fix["team_h"] == opp_id else fix["team_a_score"])
+                for fix in opp_finished
+            )
+            conceded_sum = sum(
+                (fix["team_a_score"] if fix["team_h"] == opp_id else fix["team_h_score"])
+                for fix in opp_finished
+            )
+            total_opp_scored += scored_sum / len(opp_finished)
+            total_opp_conceded += conceded_sum / len(opp_finished)
+            count += 1
+
+    avg_scored = round(total_opp_scored / count, 2) if count > 0 else 0.0
+    avg_conceded = round(total_opp_conceded / count, 2) if count > 0 else 0.0
+    opps_str = ", ".join(opp_details)
+
+    return avg_scored, avg_conceded, opps_str
+
+
 # --- 3. SIDEBAR CONTROL PANEL ---
 st.sidebar.header("🔍 Filter Parameters")
 
@@ -311,6 +363,14 @@ df_players["opponent_vulnerability"] = [x[0] for x in opp_stats_list]
 df_players["opp_goals_scored_per_match"] = [x[1] for x in opp_stats_list]
 df_players["opp_goals_conceded_per_match"] = [x[2] for x in opp_stats_list]
 
+next_3_stats = df_players.apply(
+    lambda row: calculate_next_3_opponents_stats(row.get("team"), fixtures, teams_df),
+    axis=1,
+)
+df_players["next_3_opps"] = [x[2] for x in next_3_stats]
+df_players["next_3_opp_goals_scored_avg"] = [x[0] for x in next_3_stats]
+df_players["next_3_opp_goals_conceded_avg"] = [x[1] for x in next_3_stats]
+
 max_fdr = st.sidebar.slider(
     f"Max Next {fixture_horizon} Fixture Difficulty (FDR)",
     min_value=1.0, max_value=5.0, value=5.0, step=0.1
@@ -349,6 +409,7 @@ numeric_cols = [
     "expected_goal_involvements", "minutes", "dynamic_fdr", "bps", "bonus",
     "clean_sheets", "defensive_contributions", "opponent_vulnerability",
     "opp_goals_scored_per_match", "opp_goals_conceded_per_match",
+    "next_3_opp_goals_scored_avg", "next_3_opp_goals_conceded_avg"
 ]
 for col in numeric_cols:
     if col in df_players.columns:
@@ -605,6 +666,31 @@ if not filtered_df.empty:
         st.subheader("⚔️ Head-to-Head Player Comparison")
         comparison_df = renamed_df.iloc[selected_indices]
         st.dataframe(comparison_df, use_container_width=True)
+
+    # --- NEW: NEXT 3 OPPONENTS TABLE ---
+    st.markdown("---")
+    st.subheader("📅 Next 3 Opponents Scoring & Conceding Averages")
+    st.markdown("This table breaks down the average goals scored and conceded by each player's **next 3 upcoming opponents** (based on their recent form).")
+
+    next_3_display_cols = [
+        "Player", "team_name", "position", "now_cost", 
+        "next_3_opps", "next_3_opp_goals_scored_avg", "next_3_opp_goals_conceded_avg", "predicted_gw_points"
+    ]
+    available_next_3_cols = [col for col in next_3_display_cols if col in filtered_df.columns]
+
+    renamed_next_3_df = filtered_df[available_next_3_cols].rename(
+        columns={
+            "team_name": "Team",
+            "position": "Pos",
+            "now_cost": "Price (£m)",
+            "next_3_opps": "Next 3 Opponents",
+            "next_3_opp_goals_scored_avg": "Next 3 Opp. Avg Goals Scored",
+            "next_3_opp_goals_conceded_avg": "Next 3 Opp. Avg Goals Conceded",
+            "predicted_gw_points": "Predicted GW Pts"
+        }
+    )
+    st.dataframe(renamed_next_3_df, use_container_width=True)
+
 else:
     st.warning("No players match this exact combination of filters. Try loosening your thresholds.")
 
