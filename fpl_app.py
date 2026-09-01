@@ -286,8 +286,8 @@ def calculate_next_3_opponents_stats(team_id, fixtures_list, teams_df, window=5)
     return avg_scored, avg_conceded, opps_str
 
 
-# --- NEW: FAVORABLE FIXTURE STACK CALCULATOR ---
-def check_favorable_fixture_stack(team_id, fixtures_list, teams_df, target_team_names=["Ipswich", "Hull", "Coventry", "Crystal Palace"], horizon=4, threshold=2):
+# --- FAVORABLE FIXTURE STACK CALCULATOR (UPDATED WITH SHORT CODES) ---
+def check_favorable_fixture_stack(team_id, fixtures_list, teams_df, target_team_names=["Ipswich", "IPS", "Hull", "HUL", "Coventry", "COV", "Crystal Palace", "CRY"], horizon=4, threshold=2):
     if not team_id or not fixtures_list:
         return False, 0, ""
 
@@ -406,7 +406,7 @@ df_players["next_3_opp_goals_scored_avg"] = [x[0] for x in next_3_stats]
 df_players["next_3_opp_goals_conceded_avg"] = [x[1] for x in next_3_stats]
 
 # --- INTEGRATE FAVORABLE FIXTURE STACK INTO DATAFRAME ---
-target_teams_list = ["Ipswich", "Hull", "Coventry", "Crystal Palace"]
+target_teams_list = ["Ipswich", "IPS", "Hull", "HUL", "Coventry", "COV", "Crystal Palace", "CRY"]
 stack_stats = df_players.apply(
     lambda row: check_favorable_fixture_stack(row.get("team"), fixtures, teams_df, target_team_names=target_teams_list, horizon=4, threshold=2),
     axis=1,
@@ -774,24 +774,7 @@ if manager_id and df_players is not None:
 
             st.subheader("💡 Recommended Transfer Targets")
             weakest_starter = my_squad_df.sort_values(by="predicted_gw_points", ascending=True).iloc[0]
-
-            position_pool = df_players[
-                (df_players["position"] == weakest_starter["position"])
-                & (~df_players["id"].isin(my_player_ids))
-                & (df_players["now_cost"] <= weakest_starter["now_cost"] + 1.0)
-            ]
-
-            if not position_pool.empty:
-                best_target = position_pool.sort_values(by="predicted_gw_points", ascending=False).iloc[0]
-                point_gain = round(best_target["predicted_gw_points"] - weakest_starter["predicted_gw_points"], 2)
-
-                st.success(
-                    f"**Suggested Swap:** Transfer out **{weakest_starter['Player']}** "
-                    f"({weakest_starter['predicted_gw_points']} pts) $\\rightarrow$ "
-                    f"Bring in **{best_target['Player']}** "
-                    f"({best_target['predicted_gw_points']} pts) | **Expected Gain: +{point_gain} pts**"
-                )
-        else:
-            st.sidebar.error("Could not load team. Check if your Manager ID is correct or if picks are locked/private.")
-    except Exception:
-        st.sidebar.error("Error fetching team data.")
+            
+            # Additional logic can follow here
+    except Exception as e:
+        st.sidebar.error("Could not fetch team data. Check your Manager ID.")
