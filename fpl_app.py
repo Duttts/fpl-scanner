@@ -286,6 +286,40 @@ def calculate_next_3_opponents_stats(team_id, fixtures_list, teams_df, window=5)
     return avg_scored, avg_conceded, opps_str
 
 
+# --- NEW: FAVORABLE FIXTURE STACK CALCULATOR ---
+def check_favorable_fixture_stack(team_id, fixtures_list, teams_df, target_team_names=["Ipswich", "Hull", "Coventry", "Crystal Palace"], horizon=4, threshold=2):
+    if not team_id or not fixtures_list:
+        return False, 0, ""
+
+    team_fixtures = [
+        f for f in fixtures_list
+        if (f["team_h"] == team_id or f["team_a"] == team_id) and not f["finished"]
+    ]
+    team_fixtures = sorted(team_fixtures, key=lambda x: x.get("event", 999))
+    next_fixtures = team_fixtures[:horizon]
+
+    if not next_fixtures:
+        return False, 0, ""
+
+    team_short_map = teams_df.set_index("id")["short_name"].to_dict()
+    
+    matched_count = 0
+    matched_opponents = []
+
+    for f in next_fixtures:
+        opp_id = f["team_a"] if f["team_h"] == team_id else f["team_h"]
+        opp_name = team_short_map.get(opp_id, "")
+        
+        if any(target.lower() in opp_name.lower() for target in target_team_names):
+            matched_count += 1
+            matched_opponents.append(opp_name)
+
+    is_stacked = matched_count >= threshold
+    opps_str = ", ".join(matched_opponents) if matched_opponents else "None"
+    
+    return is_stacked, matched_count, opps_str
+
+
 # --- 3. SIDEBAR CONTROL PANEL ---
 st.sidebar.header("🔍 Filter Parameters")
 
@@ -370,6 +404,29 @@ next_3_stats = df_players.apply(
 df_players["next_3_opps"] = [x[2] for x in next_3_stats]
 df_players["next_3_opp_goals_scored_avg"] = [x[0] for x in next_3_stats]
 df_players["next_3_opp_goals_conceded_avg"] = [x[1] for x in next_3_stats]
+
+# --- INTEGRATE FAVORABLE FIXTURE STACK INTO DATAFRAME ---
+target_teams_list = ["Ipswich", "Hull", "Coventry", "Crystal Palace"]
+stack_stats = df_players.apply(
+    lambda row: check_favorable_fixture_stack(row.get("team"), fixtures, teams_df, target_team_names=target_teams_list, horizon=4, threshold=2),
+    axis=1,
+)
+df_players["has_fixture_stack"] = [x[0] for x in stack_stats]
+df_players["stack_count"] = [x[1] for x in stack_stats]
+df_players["stack_opponents"] = [x[2] for x in stack_stats]
+df_players["Favorable Run Flag"] = df_players.apply(
+    lambda r: f"🟢 {r['stack_count']} Target Games ({r['stack_opponents']})" if r["has_fixture_stack"] else "Standard",
+    axis=1
+)
+
+# --- SIDEBAR TOGGLE FOR FIXTURE STACK ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("🎯 Special Fixture Filters")
+favorable_stack_only = st.sidebar.checkbox(
+    "Target 2+ vs Ipswich/Hull/Coventry/Palace in Next 4", 
+    value=False,
+    help="Filters for players whose teams face at least 2 of these specified opponents in their next 4 fixtures."
+)
 
 max_fdr = st.sidebar.slider(
     f"Max Next {fixture_horizon} Fixture Difficulty (FDR)",
@@ -479,38 +536,32 @@ def calculate_predicted_points(row):
     attacking_points = min(attacking_points, 7.0)
     appearance_points = 1.0 + sample_confidence
 
-    # 1. Base FDR Calculation
     fdr = float(row.get("dynamic_fdr", 3.0) or 3.0)
     fixture_quality = max(0.0, min(1.0, (5.0 - fdr) / 4.0))
 
-    # 2. Opponent Attack Strength (Using Opponent Goals SCORED)
     opp_goals_scored = float(row.get("opp_goals_scored_per_match", 1.0) or 1.0) 
 
     if opp_goals_scored <= 0.8:
-        attack_modifier = 1.20  # Blunt opponent attack = Great for clean sheets
+        attack_modifier = 1.20 
     elif opp_goals_scored >= 1.6:
-        attack_modifier = 0.80  # High-scoring opponent attack = Dangerous for clean sheets
+        attack_modifier = 0.80 
     else:
         attack_modifier = 1.0
 
-    # 3. Clean Sheet Momentum & Team Defensive Reliability
     clean_sheets = float(row.get("clean_sheets", 0) or 0)
     cs_momentum = 1.0 + (clean_sheets * 0.05)
     cs_momentum = max(1.0, min(1.40, cs_momentum))
 
-    # Combine fixture quality with opponent attacking threat modifier
     adjusted_fixture_quality = max(0.1, min(1.0, fixture_quality * attack_modifier))
 
-    # 4. Position-Based Clean Sheet Value
     pos_upper = position.upper()
     if pos_upper in ["GK", "DEF", "GOALKEEPER", "DEFENDER"]:
         max_cs_points = 4.0
     elif pos_upper in ["MID", "MIDFIELDER"]:
         max_cs_points = 1.0
-    else:  # FWD
+    else: 
         max_cs_points = 0.0
 
-    # Final Clean Sheet Expected Points Calculation
     clean_sheet_points = max_cs_points * adjusted_fixture_quality * cs_momentum
 
     bps_p90 = float(row.get("bps_per_90", 0) or 0)
@@ -534,6 +585,9 @@ if selected_position != "All":
 
 filtered_df = filtered_df[filtered_df["now_cost"] <= max_price]
 filtered_df = filtered_df[filtered_df["dynamic_fdr"] <= max_fdr]
+
+if favorable_stack_only:
+    filtered_df = filtered_df[filtered_df["has_fixture_stack"] == True]
 
 if leaky_defenses_only:
     filtered_df = filtered_df[filtered_df["opponent_vulnerability"] > 1.2]
@@ -612,7 +666,7 @@ if not filtered_df.empty:
 
 desired_display_columns = [
     "Player", "team_name", "position", "now_cost", "predicted_gw_points",
-    "form_status", "form_trend_delta", "opponent_vulnerability",
+    "Favorable Run Flag", "form_status", "form_trend_delta", "opponent_vulnerability",
     "opp_goals_scored_per_match", "opp_goals_conceded_per_match", "dynamic_fdr",
     "form", "total_points", "points_per_90", "expected_goal_involvements",
     "clean_sheets", "defensive_contributions", "threat", "creativity", "influence", "bonus",
@@ -632,6 +686,7 @@ if not filtered_df.empty:
             "position": "Pos",
             "now_cost": "Price (£m)",
             "predicted_gw_points": "Predicted GW Pts",
+            "Favorable Run Flag": "Fixture Stack Run",
             "form_status": "Form Trend",
             "form_trend_delta": "Trend Delta (+/-)",
             "opponent_vulnerability": "Opp. Vulnerability",
@@ -667,7 +722,7 @@ if not filtered_df.empty:
         comparison_df = renamed_df.iloc[selected_indices]
         st.dataframe(comparison_df, use_container_width=True)
 
-    # --- NEW: NEXT 3 OPPONENTS TABLE ---
+    # --- NEXT 3 OPPONENTS TABLE ---
     st.markdown("---")
     st.subheader("📅 Next 3 Opponents Scoring & Conceding Averages")
     st.markdown("This table breaks down the average goals scored and conceded by each player's **next 3 upcoming opponents** (based on their recent form).")
