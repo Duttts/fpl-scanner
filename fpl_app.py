@@ -442,7 +442,7 @@ df_players["Favorable Run Flag"] = df_players.apply(
 st.sidebar.markdown("---")
 st.sidebar.subheader("🎯 Special Fixture Filters")
 favorable_stack_only = st.sidebar.checkbox(
-    "Target 2+ vs Ipswich/Hull/Coventry/Palace in Next 4", 
+    "Target 2+ vs Ipswich/Hull/Coventry/Palace/Fulham in Next 4", 
     value=False,
     help="Filters for players whose teams face at least 2 of these specified opponents in their next 4 fixtures."
 )
