@@ -166,15 +166,15 @@ def fetch_rolling_data(player_ids, num_gameweeks=5):
                                 for g in matches
                             )
                             / n
-                        )
-                        threat = (
+                             )
+                            threat = (
                             sum(float(g.get("threat", 0) or 0) for g in matches) / n
-                        ) / 100.0
-                        influence = (
+                            ) / 100.0
+                            influence = (
                             sum(float(g.get("influence", 0) or 0) for g in matches) / n
-                        ) / 100.0
+                            ) / 100.0
 
-                        return (influence * 0.40) + (xgi * 0.30) + (threat * 0.30) 
+                            return (influence * 0.40) + (xgi * 0.30) + (threat * 0.30) 
 
                         recent_score = get_composite_score(last_two_matches)
                         baseline_score = get_composite_score(baseline_matches)
