@@ -304,7 +304,7 @@ def calculate_next_3_opponents_stats(team_id, fixtures_list, teams_df, window=5)
 
 
 # --- FAVORABLE FIXTURE STACK CALCULATOR (UPDATED WITH SHORT CODES) ---
-def check_favorable_fixture_stack(team_id, fixtures_list, teams_df, target_team_names=["Ipswich", "IPS", "Hull", "HUL", "Coventry", "COV", "Crystal Palace", "CRY"], horizon=4, threshold=2):
+def check_favorable_fixture_stack(team_id, fixtures_list, teams_df, target_team_names=["Ipswich", "IPS", "Hull", "HUL", "Coventry", "COV", "Crystal Palace", "CRY", "Fulham", "Ful",], horizon=4, threshold=2):
     if not team_id or pd.isna(team_id) or not fixtures_list:
         return False, 0, ""
 
@@ -425,7 +425,7 @@ df_players["next_3_opp_goals_scored_avg"] = [x[0] for x in next_3_stats]
 df_players["next_3_opp_goals_conceded_avg"] = [x[1] for x in next_3_stats]
 
 # --- INTEGRATE FAVORABLE FIXTURE STACK INTO DATAFRAME ---
-target_teams_list = ["Ipswich", "IPS", "Hull", "HUL", "Coventry", "COV", "Crystal Palace", "CRY"]
+target_teams_list = ["Ipswich", "IPS", "Hull", "HUL", "Coventry", "COV", "Crystal Palace", "CRY", "Fulham", "Ful",]
 stack_stats = df_players.apply(
     lambda row: check_favorable_fixture_stack(row.get("team"), fixtures, teams_df, target_team_names=target_teams_list, horizon=4, threshold=2),
     axis=1,
