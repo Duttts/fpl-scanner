@@ -526,67 +526,71 @@ df_players["def_contrib_per_90"] = df_players.apply(lambda r: calc_per_90(r, "de
 # --- PREDICTIVE MODEL CALCULATION ---
 def calculate_predicted_points(row):
     minutes = float(row.get("minutes", 0) or 0)
-    position = str(row.get("position", "") or "")
-
-    if minutes <= 0:
-        return 0.0
-
-    sample_confidence = min(minutes / target_sample_mins, 1.0)
-    if minutes < (target_sample_mins * 0.4):
-        sample_confidence *= 0.85
-    elif minutes < (target_sample_mins * 0.6):
-        sample_confidence *= 0.92
-
-    xgi_p90 = float(row.get("xgi_per_90", 0) or 0)
-
-    if position in ("Forward", "Midfielder"):
-        attacking_points = xgi_p90 * 4.0
-    elif position == "Defender":
-        attacking_points = xgi_p90 * 3.5
-    else:
-        attacking_points = xgi_p90 * 3.0
-
-    attacking_points = min(attacking_points, 7.0)
-    appearance_points = 1.0 + sample_confidence
-
-    fdr = float(row.get("dynamic_fdr", 3.0) or 3.0)
-    fixture_quality = max(0.0, min(1.0, (5.0 - fdr) / 4.0))
-
-    opp_goals_scored = float(row.get("opp_goals_scored_per_match", 1.0) or 1.0) 
-
-    if opp_goals_scored <= 0.8:
-        attack_modifier = 1.20 
-    elif opp_goals_scored >= 1.6:
-        attack_modifier = 0.80 
-    else:
-        attack_modifier = 1.0
-
-    clean_sheets = float(row.get("clean_sheets", 0) or 0)
-    cs_momentum = 1.0 + (clean_sheets * 0.05)
-    cs_momentum = max(1.0, min(1.40, cs_momentum))
-
-    adjusted_fixture_quality = max(0.1, min(1.0, fixture_quality * attack_modifier))
-
-    pos_upper = position.upper()
-    if pos_upper in ["GK", "DEF", "GOALKEEPER", "DEFENDER"]:
-        max_cs_points = 4.0
-    elif pos_upper in ["MID", "MIDFIELDER"]:
-        max_cs_points = 1.0
-    else: 
-        max_cs_points = 0.0
-
-    clean_sheet_points = max_cs_points * adjusted_fixture_quality * cs_momentum
-
-    bps_p90 = float(row.get("bps_per_90", 0) or 0)
-    bonus_component = min(1.5, max(0.0, bps_p90 / 100.0))
-
-    influence_p90 = float(row.get("influence_per_90", 0) or 0)
-    influence_component = min(1.0, influence_p90 / 75.0)
-
-    performance_component = attacking_points + clean_sheet_points + bonus_component + influence_component
-    expected_points = appearance_points + performance_component * sample_confidence
     
-    return round(max(0.0, min(expected_points, 15.0)), 2)
+    # 1. Base Minutes & Confidence Scaling
+    # Target is 450 mins (5 games x 90 mins)
+    target_minutes = 450.0
+    minutes_ratio = min(minutes / target_minutes, 1.0)
+    
+    # Penalty for low minutes sample
+    if minutes_ratio < 0.4:
+        confidence = minutes_ratio * 0.5
+    elif minutes_ratio < 0.6:
+        confidence = minutes_ratio * 0.8
+    else:
+        confidence = minutes_ratio
+
+    # 2. Extract Metrics Per 90
+    pos = str(row.get("position", "")).upper()
+    xgi_p90 = float(row.get("xgi_p90", 0) or 0)
+    threat_p90 = float(row.get("threat_p90", 0) or 0) / 100.0  # Scaled ~0.0 - 1.2+
+    influence_p90 = float(row.get("influence_p90", 0) or 0)
+    bps_p90 = float(row.get("bps_p90", 0) or 0)
+
+    # 3. Balanced Attacking Points (xGI + Threat)
+    # Reduced xGI weight, added Threat weight
+    if pos in ["FWD", "MID"]:
+        attacking_pts = (xgi_p90 * 2.5) + (threat_p90 * 1.5)
+    elif pos == "DEF":
+        attacking_pts = (xgi_p90 * 2.0) + (threat_p90 * 1.0)
+    else:  # GKP
+        attacking_pts = (xgi_p90 * 1.5) + (threat_p90 * 0.5)
+        
+    attacking_pts = min(attacking_pts, 6.0)  # Capped at 6.0 pts
+
+    # 4. Defensive & Fixture Adjustments
+    fdr = float(row.get("dynamic_fdr", 3) or 3)
+    opp_goals = float(row.get("opp_goals_scored_per_match", 1.2) or 1.2)
+    
+    # Fixture multiplier based on FDR and Opponent Threat
+    fixture_factor = (6.0 - fdr) / 3.0  # FDR 1 = 1.67, FDR 3 = 1.0, FDR 5 = 0.33
+    if opp_goals <= 0.8:
+        fixture_factor *= 1.15
+    elif opp_goals >= 1.6:
+        fixture_factor *= 0.85
+
+    # Position Clean Sheet Potential
+    cs_base = 0.0
+    if pos in ["GKP", "DEF"]:
+        cs_base = 4.0
+    elif pos == "MID":
+        cs_base = 1.0
+        
+    defensive_pts = cs_base * (fixture_factor / 2.0)
+
+    # 5. Influence Component (Boosted: Max +2.0 pts instead of +1.0)
+    influence_pts = min(influence_p90 / 50.0, 2.0)
+
+    # 6. Bonus Point System (BPS) Component
+    bps_pts = min(bps_p90 / 30.0, 1.5)
+
+    # 7. Final Expected Points Assembly
+    appearance_pts = 2.0 if minutes_ratio >= 0.5 else (1.0 if minutes_ratio > 0 else 0.0)
+    
+    performance_score = (attacking_pts + defensive_pts + influence_pts + bps_pts) * fixture_factor
+    predicted_points = appearance_pts + (performance_score * confidence)
+
+    return round(max(0.0, min(predicted_points, 15.0)), 2)
 
 df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points, axis=1)
 
