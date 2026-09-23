@@ -157,7 +157,7 @@ def fetch_rolling_data(player_ids, num_gameweeks=5):
                         def get_composite_score(matches):
                             n = len(matches)
                             if n == 0:
-                            return 0.0
+                                return 0.0
 
                             xgi = (
                             sum(
