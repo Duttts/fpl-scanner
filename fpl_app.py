@@ -213,8 +213,10 @@ def fetch_rolling_data(player_ids, num_gameweeks=5):
 
 
 def calculate_recent_opponent_stats(opponent_id, fixtures_list, window=5):
-    if not opponent_id or not fixtures_list:
+    if not opponent_id or pd.isna(opponent_id) or not fixtures_list:
         return 1.0, 0.0, 0.0
+
+    opponent_id = int(opponent_id)
 
     opp_fixtures = [
         f for f in fixtures_list
@@ -234,11 +236,11 @@ def calculate_recent_opponent_stats(opponent_id, fixtures_list, window=5):
     total_scored = 0
     for match in recent_matches:
         if match["team_h"] == opponent_id:
-            total_conceded += match["team_a_score"]
-            total_scored += match["team_h_score"]
+            total_conceded += match.get("team_a_score", 0) or 0
+            total_scored += match.get("team_h_score", 0) or 0
         else:
-            total_conceded += match["team_h_score"]
-            total_scored += match["team_a_score"]
+            total_conceded += match.get("team_h_score", 0) or 0
+            total_scored += match.get("team_a_score", 0) or 0
 
     conceded_per_match = total_conceded / len(recent_matches)
     scored_per_match = total_scored / len(recent_matches)
@@ -248,8 +250,10 @@ def calculate_recent_opponent_stats(opponent_id, fixtures_list, window=5):
 
 
 def calculate_next_3_opponents_stats(team_id, fixtures_list, teams_df, window=5):
-    if not team_id or not fixtures_list:
+    if not team_id or pd.isna(team_id) or not fixtures_list:
         return 0.0, 0.0, "None"
+
+    team_id = int(team_id)
 
     team_fixtures = [
         f for f in fixtures_list
@@ -281,11 +285,11 @@ def calculate_next_3_opponents_stats(team_id, fixtures_list, teams_df, window=5)
 
         if opp_finished:
             scored_sum = sum(
-                (fix["team_h_score"] if fix["team_h"] == opp_id else fix["team_a_score"])
+                (fix.get("team_h_score", 0) if fix["team_h"] == opp_id else fix.get("team_a_score", 0)) or 0
                 for fix in opp_finished
             )
             conceded_sum = sum(
-                (fix["team_a_score"] if fix["team_h"] == opp_id else fix["team_h_score"])
+                (fix.get("team_a_score", 0) if fix["team_h"] == opp_id else fix.get("team_h_score", 0)) or 0
                 for fix in opp_finished
             )
             total_opp_scored += scored_sum / len(opp_finished)
@@ -301,8 +305,10 @@ def calculate_next_3_opponents_stats(team_id, fixtures_list, teams_df, window=5)
 
 # --- FAVORABLE FIXTURE STACK CALCULATOR (UPDATED WITH SHORT CODES) ---
 def check_favorable_fixture_stack(team_id, fixtures_list, teams_df, target_team_names=["Ipswich", "IPS", "Hull", "HUL", "Coventry", "COV", "Crystal Palace", "CRY"], horizon=4, threshold=2):
-    if not team_id or not fixtures_list:
+    if not team_id or pd.isna(team_id) or not fixtures_list:
         return False, 0, ""
+
+    team_id = int(team_id)
 
     team_fixtures = [
         f for f in fixtures_list
@@ -539,7 +545,7 @@ def calculate_predicted_points(row):
     else:
         confidence = minutes_ratio
 
-    # 2. Extract Metrics Per 90 (FIXED KEYS)
+    # 2. Extract Metrics Per 90
     pos = str(row.get("position", "")).upper()
     xgi_p90 = float(row.get("xgi_per_90", 0) or 0)
     threat_p90 = float(row.get("threat_per_90", 0) or 0) / 100.0  # Scaled ~0.0 - 1.2+
@@ -589,9 +595,6 @@ def calculate_predicted_points(row):
     predicted_points = appearance_pts + (performance_score * confidence)
 
     return round(max(0.0, min(predicted_points, 15.0)), 2)
-
-# FIXED: Removed the invalid trailing 'and' syntax
-df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points, axis=1)
 
 df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points, axis=1)
 
