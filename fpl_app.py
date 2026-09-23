@@ -160,21 +160,21 @@ def fetch_rolling_data(player_ids, num_gameweeks=5):
                                 return 0.0
 
                             xgi = (
-                            sum(
-                                float(g.get("expected_goals", 0) or 0)
-                                + float(g.get("expected_assists", 0) or 0)
-                                for g in matches
+                                sum(
+                                    float(g.get("expected_goals", 0) or 0)
+                                    + float(g.get("expected_assists", 0) or 0)
+                                    for g in matches
+                                )
+                                / n
                             )
-                            / n
-                             )
                             threat = (
-                            sum(float(g.get("threat", 0) or 0) for g in matches) / n
+                                sum(float(g.get("threat", 0) or 0) for g in matches) / n
                             ) / 100.0
                             influence = (
-                            sum(float(g.get("influence", 0) or 0) for g in matches) / n
+                                sum(float(g.get("influence", 0) or 0) for g in matches) / n
                             ) / 100.0
 
-                            return (influence * 0.40) + (xgi * 0.30) + (threat * 0.30) 
+                            return (influence * 0.40) + (xgi * 0.30) + (threat * 0.30)
 
                         recent_score = get_composite_score(last_two_matches)
                         baseline_score = get_composite_score(baseline_matches)
@@ -528,8 +528,7 @@ def calculate_predicted_points(row):
     minutes = float(row.get("minutes", 0) or 0)
     
     # 1. Base Minutes & Confidence Scaling
-    # Target is 450 mins (5 games x 90 mins)
-    target_minutes = 450.0
+    target_minutes = target_sample_mins if 'target_sample_mins' in globals() else 450.0
     minutes_ratio = min(minutes / target_minutes, 1.0)
     
     # Penalty for low minutes sample
@@ -540,15 +539,14 @@ def calculate_predicted_points(row):
     else:
         confidence = minutes_ratio
 
-    # 2. Extract Metrics Per 90
+    # 2. Extract Metrics Per 90 (FIXED KEYS)
     pos = str(row.get("position", "")).upper()
-    xgi_p90 = float(row.get("xgi_p90", 0) or 0)
-    threat_p90 = float(row.get("threat_p90", 0) or 0) / 100.0  # Scaled ~0.0 - 1.2+
-    influence_p90 = float(row.get("influence_p90", 0) or 0)
-    bps_p90 = float(row.get("bps_p90", 0) or 0)
+    xgi_p90 = float(row.get("xgi_per_90", 0) or 0)
+    threat_p90 = float(row.get("threat_per_90", 0) or 0) / 100.0  # Scaled ~0.0 - 1.2+
+    influence_p90 = float(row.get("influence_per_90", 0) or 0)
+    bps_p90 = float(row.get("bps_per_90", 0) or 0)
 
     # 3. Balanced Attacking Points (xGI + Threat)
-    # Reduced xGI weight, added Threat weight
     if pos in ["FWD", "MID"]:
         attacking_pts = (xgi_p90 * 2.5) + (threat_p90 * 1.5)
     elif pos == "DEF":
@@ -578,7 +576,7 @@ def calculate_predicted_points(row):
         
     defensive_pts = cs_base * (fixture_factor / 2.0)
 
-    # 5. Influence Component (Boosted: Max +2.0 pts instead of +1.0)
+    # 5. Influence Component
     influence_pts = min(influence_p90 / 50.0, 2.0)
 
     # 6. Bonus Point System (BPS) Component
@@ -591,6 +589,9 @@ def calculate_predicted_points(row):
     predicted_points = appearance_pts + (performance_score * confidence)
 
     return round(max(0.0, min(predicted_points, 15.0)), 2)
+
+# FIXED: Removed the invalid trailing 'and' syntax
+df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points, axis=1)
 
 df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points, axis=1)
 
