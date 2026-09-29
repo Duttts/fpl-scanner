@@ -639,13 +639,23 @@ df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points,
 # Diagnostic column so the UI makes the attacking matchup adjustment visible.
 
     
-  # --- 100% LINEAR BOOST OVERRIDE (NO IF STATEMENTS) ---
+ # --- SMART AUTO-DETECT BOOST OVERRIDE ---
 df_players["attacking_fixture_boost"] = 1.0
-_conceded_vals = pd.to_numeric(df_players.get("opp_goals_conceded_per_match", df_players.get("Opp. Goals Conceded (Last 5)", 1.2)), errors="coerce").fillna(1.2)
-_is_mid_fwd = df_players["position"].str.upper().isin(["MID", "FWD"])
-df_players.loc[_is_mid_fwd & (_conceded_vals >= 1.5), "attacking_fixture_boost"] = 1.15
-df_players.loc[_is_mid_fwd & (_conceded_vals <= 0.8), "attacking_fixture_boost"] = 0.85
-# ----------------------------------------------------
+
+# Automatically find position and conceded columns
+_pos_col = next((c for c in df_players.columns if c.lower() in ["position", "pos"]), None)
+_conc_col = next((c for c in df_players.columns if "conceded" in c.lower()), None)
+
+if _pos_col and _conc_col:
+    _pos_vals = df_players[_pos_col].astype(str).str.upper()
+    _is_mid_fwd = _pos_vals.str.contains("MID|FWD", regex=True)
+    
+    _conceded_vals = pd.to_numeric(df_players[_conc_col], errors="coerce").fillna(1.2)
+    
+    df_players.loc[_is_mid_fwd & (_conceded_vals >= 1.5), "attacking_fixture_boost"] = 1.15
+    df_pins = _is_mid_fwd & (_conceded_vals <= 0.8)
+    df_players.loc[_is_mid_fwd & (_conceded_vals <= 0.8), "attacking_fixture_boost"] = 0.85
+# ----------------------------------------
 
 
 # --- 4. APPLY FILTERING ---
