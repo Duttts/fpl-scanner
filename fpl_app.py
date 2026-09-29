@@ -530,6 +530,8 @@ df_players["def_contrib_per_90"] = df_players.apply(lambda r: calc_per_90(r, "de
 
 
 # --- PREDICTIVE MODEL CALCULATION ---
+if "Tavernier" in str(row.get("second_name", "")):
+    print(f"DEBUG Tavernier -> opp_conceded: {opp_conceded}, fixture_factor: {fixture_factor}")
 def calculate_predicted_points(row):
     minutes = float(row.get("minutes", 0) or 0)
     
