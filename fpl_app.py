@@ -406,9 +406,11 @@ df_players["dynamic_fdr"] = df_players["team"].map(team_fdr_map)
 df_players["upcoming_opponent_team_id"] = df_players["team"].map(next_opponent_map)
 df_players["upcoming_opponent_name"] = df_players["upcoming_opponent_team_id"].map(team_short_name_map)
 
+# Always evaluate the NEXT opponent using their last 5 completed matches.
+# This is intentionally independent of the player's selected data scope/window.
 opp_stats_list = df_players.apply(
     lambda row: calculate_recent_opponent_stats(
-        row.get("upcoming_opponent_team_id"), fixtures, rolling_window_size
+        row.get("upcoming_opponent_team_id"), fixtures, window=5
     ),
     axis=1,
 )
@@ -531,15 +533,12 @@ df_players["def_contrib_per_90"] = df_players.apply(lambda r: calc_per_90(r, "de
 
 # --- PREDICTIVE MODEL CALCULATION ---
 def calculate_predicted_points(row):
-   
-
     minutes = float(row.get("minutes", 0) or 0)
-    
+
     # 1. Base Minutes & Confidence Scaling
-    target_minutes = target_sample_mins if 'target_sample_mins' in globals() else 450.0
+    target_minutes = target_sample_mins if "target_sample_mins" in globals() else 450.0
     minutes_ratio = min(minutes / target_minutes, 1.0)
-    
-    # Penalty for low minutes sample
+
     if minutes_ratio < 0.4:
         confidence = minutes_ratio * 0.5
     elif minutes_ratio < 0.6:
@@ -550,86 +549,91 @@ def calculate_predicted_points(row):
     # 2. Extract Metrics Per 90
     pos = str(row.get("position", "")).upper()
     xgi_p90 = float(row.get("xgi_per_90", 0) or 0)
-    threat_p90 = float(row.get("threat_per_90", 0) or 0) / 100.0  # Scaled ~0.0 - 1.2+
+    threat_p90 = float(row.get("threat_per_90", 0) or 0) / 100.0
     influence_p90 = float(row.get("influence_per_90", 0) or 0)
     bps_p90 = float(row.get("bps_per_90", 0) or 0)
 
-    # 3. Balanced Attacking Points (xGI + Threat)
+    # 3. Base Attacking Points (xGI + Threat)
     if pos in ["FWD", "MID"]:
         attacking_pts = (xgi_p90 * 2.5) + (threat_p90 * 1.5)
     elif pos == "DEF":
         attacking_pts = (xgi_p90 * 2.0) + (threat_p90 * 1.0)
     else:  # GKP
         attacking_pts = (xgi_p90 * 1.5) + (threat_p90 * 0.5)
-        
-    attacking_pts = min(attacking_pts, 6.0)  # Capped at 6.0 pts
 
-    # 4. Defensive & Fixture Adjustments
-        # 4. Defensive & Fixture Adjustments
+    attacking_pts = min(attacking_pts, 6.0)
+
+    # 4. Fixture & Opponent Adjustments
     fdr = float(row.get("dynamic_fdr", 3) or 3)
     opp_goals = float(row.get("opp_goals_scored_per_match", 1.2) or 1.2)
+    opp_conceded = float(row.get("opp_goals_conceded_per_match", 1.2) or 1.2)
 
-    # Opponent goals conceded over their last 5 completed matches
-    opp_conceded = float(
-        row.get("opp_goals_conceded_per_match", 1.2) or 1.2
-    )
-
-    # Fixture multiplier based on FDR
+    # General fixture multiplier based on FDR.
     fixture_factor = (6.0 - fdr) / 3.0
+    fixture_factor = max(0.5, min(fixture_factor, 1.5))
 
-    # Defender CS penalty/boost based on opponent goals scored
+    # Defender clean-sheet adjustment based on the opponent's last-5 scoring rate.
+    # This affects the general fixture factor because it represents clean-sheet potential.
     if opp_goals <= 0.8:
         fixture_factor *= 1.15
     elif opp_goals >= 1.6:
         fixture_factor *= 0.85
 
-    # Attacker boost/penalty based on opponent goals conceded
+    # IMPORTANT: The leaky-defence adjustment is deliberately separate from
+    # fixture_factor. For MID/FWD, an opponent averaging >= 1.5 goals conceded
+    # over their LAST 5 COMPLETED MATCHES gives a direct +15% attacking boost.
+    attacking_fixture_factor = 1.0
     if pos in ["MID", "FWD"]:
         if opp_conceded >= 1.5:
-            fixture_factor *= 1.15  # Boost attackers against leaky defenses
+            attacking_fixture_factor = 1.15
         elif opp_conceded <= 0.8:
-            fixture_factor *= 0.85  # Penalize attackers against solid defenses
-        opp_conceded = 1.2
-    
-    # Fixture multiplier based on FDR
-    fixture_factor = (6.0 - fdr) / 3.0
-    
-    # Defender CS penalty/boost based on opponent goals scored
-    if opp_goals <= 0.8:
-        fixture_factor *= 1.15
-    elif opp_goals >= 1.6:
-        fixture_factor *= 0.85
+            attacking_fixture_factor = 0.85
 
-    # Attacker boost/penalty based on opponent goals conceded
-    if pos in ["MID", "FWD"]:
-        if opp_conceded >= 1.5:
-            fixture_factor *= 1.15  # Boost attackers against leaky defenses
-        elif opp_conceded <= 0.8:
-            fixture_factor *= 0.85  # Penalize attackers against solid defenses
+    attacking_pts *= attacking_fixture_factor
 
-    # Position Clean Sheet Potential
-    cs_base = 0.0
+    # 5. Position Clean Sheet Potential
     if pos in ["GKP", "DEF"]:
         cs_base = 4.0
     elif pos == "MID":
         cs_base = 1.0
-        
+    else:
+        cs_base = 0.0
+
     defensive_pts = cs_base * (fixture_factor / 2.0)
 
-    # 5. Influence Component
+    # 6. Influence Component
     influence_pts = min(influence_p90 / 25.0, 1.5)
 
-    # 6. Bonus Point System (BPS) Component
+    # 7. Bonus Point System (BPS) Component
     bps_pts = min(bps_p90 / 30.0, 1.5)
 
-    # 7. Final Expected Points Assembly
+    # 8. Final Expected Points Assembly
     appearance_pts = 2.0 if minutes_ratio >= 0.5 else (1.0 if minutes_ratio > 0 else 0.0)
-    
-    performance_score = (attacking_pts + defensive_pts + influence_pts + bps_pts) * fixture_factor
+
+    performance_score = (
+        attacking_pts + defensive_pts + influence_pts + bps_pts
+    ) * fixture_factor
+
     predicted_points = appearance_pts + (performance_score * confidence)
 
     return round(max(0.0, min(predicted_points, 15.0)), 2)
 df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points, axis=1)
+
+# Diagnostic column so the UI makes the attacking matchup adjustment visible.
+df_players["attacking_fixture_boost"] = df_players.apply(
+    lambda row: (
+        1.15
+        if str(row.get("position", "")).upper() in ["MID", "FWD"]
+        and float(row.get("opp_goals_conceded_per_match", 1.2) or 1.2) >= 1.5
+        else (
+            0.85
+            if str(row.get("position", "")).upper() in ["MID", "FWD"]
+            and float(row.get("opp_goals_conceded_per_match", 1.2) or 1.2) <= 0.8
+            else 1.0
+        )
+    ),
+    axis=1,
+)
 
 # --- 4. APPLY FILTERING ---
 filtered_df = df_players.copy()
@@ -721,7 +725,7 @@ if not filtered_df.empty:
 desired_display_columns = [
     "Player", "team_name", "position", "now_cost", "predicted_gw_points",
     "Favorable Run Flag", "form_status", "form_trend_delta", "opponent_vulnerability",
-    "opp_goals_scored_per_match", "opp_goals_conceded_per_match", "dynamic_fdr",
+    "opp_goals_scored_per_match", "opp_goals_conceded_per_match", "attacking_fixture_boost", "dynamic_fdr",
     "form", "total_points", "points_per_90", "expected_goal_involvements",
     "clean_sheets", "defensive_contributions", "threat", "creativity", "influence", "bonus",
     "minutes", "selected_by_percent",
@@ -746,6 +750,7 @@ if not filtered_df.empty:
             "opponent_vulnerability": "Opp. Vulnerability",
             "opp_goals_scored_per_match": "Opp. Goals Scored (Last 5)",
             "opp_goals_conceded_per_match": "Opp. Goals Conceded (Last 5)",
+            "attacking_fixture_boost": "Attacking Fixture Boost",
             "dynamic_fdr": f"Next {fixture_horizon} FDR",
             "form": "Form",
             "total_points": "Points",
@@ -832,4 +837,3 @@ if manager_id and df_players is not None:
             # Additional logic can follow here
     except Exception as e:
         st.sidebar.error("Could not fetch team data. Check your Manager ID.")
-
