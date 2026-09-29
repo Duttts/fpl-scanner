@@ -531,7 +531,6 @@ df_players["def_contrib_per_90"] = df_players.apply(lambda r: calc_per_90(r, "de
 
 # --- PREDICTIVE MODEL CALCULATION ---
 def calculate_predicted_points(row):
-    
     # --- TEMPORARY DEBUG CHECK ---
     if "Tavernier" in str(row.get("second_name", "")) or "Tavernier" in str(row.get("web_name", "")):
         print("--- TAVERNIER DEBUG ---")
@@ -539,6 +538,7 @@ def calculate_predicted_points(row):
         print("Opps.Goals Conceded column value:", row.get("Opps.Goals Conceded (Last 5)"))
         print("All keys available:", list(row.keys() if hasattr(row, 'keys') else []))
     # -----------------------------
+
     minutes = float(row.get("minutes", 0) or 0)
     
     # 1. Base Minutes & Confidence Scaling
@@ -619,7 +619,6 @@ def calculate_predicted_points(row):
     predicted_points = appearance_pts + (performance_score * confidence)
 
     return round(max(0.0, min(predicted_points, 15.0)), 2)
-
 df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points, axis=1)
 
 # --- 4. APPLY FILTERING ---
