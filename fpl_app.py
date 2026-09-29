@@ -639,7 +639,7 @@ df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points,
 # Diagnostic column so the UI makes the attacking matchup adjustment visible.
 
     
-    raw_conceded = row.get("Opp. Goals Conceded (Last 5)", row.get("opp_goals_conceded_per_match", 1.2))
+                raw_conceded = row.get("Opp. Goals Conceded (Last 5)", row.get("opp_goals_conceded_per_match", 1.2))
     
     # --- TEMPORARY PRINT ---
     if row.get("second_name") == "Tavernier":
