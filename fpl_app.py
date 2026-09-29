@@ -564,24 +564,27 @@ def calculate_predicted_points(row):
     attacking_pts = min(attacking_pts, 6.0)
 
     # 4. Fixture & Opponent Adjustments
+   # 4. Fixture & Opponent Adjustments
     fdr = float(row.get("dynamic_fdr", 3) or 3)
     opp_goals = float(row.get("opp_goals_scored_per_match", 1.2) or 1.2)
-    opp_conceded = float(row.get("opp_goals_conceded_per_match", 1.2) or 1.2)
+    
+    # FORCE conversion to a true float so string data types don't break the check
+    raw_conceded = row.get("opp_goals_conceded_per_match", 1.2)
+    try:
+        opp_conceded = float(raw_conceded) if raw_conceded is not None else 1.2
+    except (ValueError, TypeError):
+        opp_conceded = 1.2
 
-    # General fixture multiplier based on FDR.
+    # General fixture multiplier based on FDR
     fixture_factor = (6.0 - fdr) / 3.0
     fixture_factor = max(0.5, min(fixture_factor, 1.5))
 
-    # Defender clean-sheet adjustment based on the opponent's last-5 scoring rate.
-    # This affects the general fixture factor because it represents clean-sheet potential.
     if opp_goals <= 0.8:
         fixture_factor *= 1.15
     elif opp_goals >= 1.6:
         fixture_factor *= 0.85
 
-    # IMPORTANT: The leaky-defence adjustment is deliberately separate from
-    # fixture_factor. For MID/FWD, an opponent averaging >= 1.5 goals conceded
-    # over their LAST 5 COMPLETED MATCHES gives a direct +15% attacking boost.
+    # Direct 15% attacking boost for MID/FWD if opponent concedes >= 1.5
     attacking_fixture_factor = 1.0
     if pos in ["MID", "FWD"]:
         if opp_conceded >= 1.5:
