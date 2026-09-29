@@ -569,9 +569,10 @@ def calculate_predicted_points(row):
     opp_goals = float(row.get("opp_goals_scored_per_match", 1.2) or 1.2)
     
     # FORCE conversion to a true float so string data types don't break the check
-    raw_conceded = row.get("opp_goals_conceded_per_match", 1.2)
+    # Ensure calculation function also reads the correct key
+    raw_conceded = row.get("Opp.Goals Conceded (Last 5)", row.get("opp_goals_conceded_per_match", 1.2))
     try:
-        opp_conceded = float(raw_conceded) if raw_conceded is not None else 1.2
+        opp_conceded = float(raw_conceded) if raw_conceded is not None and str(raw_conceded).strip() != "" else 1.2
     except (ValueError, TypeError):
         opp_conceded = 1.2
 
