@@ -566,12 +566,24 @@ def calculate_predicted_points(row):
     fdr = float(row.get("dynamic_fdr", 3) or 3)
     opp_goals = float(row.get("opp_goals_scored_per_match", 1.2) or 1.2)
     
+    # Extract opponent goals CONCEDED directly from your "Opps.Goals Conceded (Last 5)" column
+    opp_conceded = float(row.get("Opps.Goals Conceded (Last 5)", 1.2) or 1.2)
+    
     # Fixture multiplier based on FDR and Opponent Threat
     fixture_factor = (6.0 - fdr) / 3.0  # FDR 1 = 1.67, FDR 3 = 1.0, FDR 5 = 0.33
+    
+    # Adjustment for Defenders/GKs based on opponent goals SCORED
     if opp_goals <= 0.8:
         fixture_factor *= 1.15
     elif opp_goals >= 1.6:
         fixture_factor *= 0.85
+
+    # NEW: Attacking Adjustment for MID/FWD based on opponent goals CONCEDED
+    if pos in ["MID", "FWD"]:
+        if opp_conceded >= 1.5:
+            fixture_factor *= 1.15  # Boost attackers against leaky defenses
+        elif opp_conceded <= 0.8:
+            fixture_factor *= 0.85  # Penalize attackers against solid defenses
 
     # Position Clean Sheet Potential
     cs_base = 0.0
