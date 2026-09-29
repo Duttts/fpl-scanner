@@ -639,23 +639,22 @@ df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points,
 # Diagnostic column so the UI makes the attacking matchup adjustment visible.
 
     
-    raw_conceded = row.get("Opp. Goals Conceded (Last 5)", row.get("opp_goals_conceded_per_match", 1.2))
+    # --- FORCE ATTACKING BOOST DIRECTLY ---
+if "attacking_fixture_boost" not in df_players.columns:
+    df_players["attacking_fixture_boost"] = 1.0
+
+is_mid_fwd = df_players["position"].str.upper().isin(["MID", "FWD"])
+conceded_col = "opp_goals_conceded_per_match" if "opp_goals_conceded_per_match" in df_players.columns else "Opp. Goals Conceded (Last 5)"
+
+if conceded_col in df_players.columns:
+    conceded_vals = pd.to_numeric(df_players[conceded_col], errors="coerce").fillna(1.2)
     
-    # --- TEMPORARY PRINT ---
-    if row.get("second_name") == "Tavernier":
-        print(f"DEBUG TABLE ROW - Position: {pos} | Raw Conceded Found: {raw_conceded}")
-    # -----------------------
-    
-    try:
-        conceded = float(raw_conceded) if raw_conceded is not None and str(raw_conceded).strip() != "" else 1.2
-    except (ValueError, TypeError):
-        conceded = 1.2
-        
-    if conceded >= 1.5:
-        return 1.15
-    elif conceded <= 0.8:
-        return 0.85
-    return 1.0
+    df_players.loc[is_mid_fwd & (conceded_vals >= 1.5), "attacking_fixture_boost"] = 1.15
+    df_players.loc[is_mid_fwd & (conceded_vals <= 0.8), "attacking_fixture_boost"] = 0.85
+    df_players.loc[is_mid_fwd & (conceded_vals > 0.8) & (conceded_vals < 1.5), "attacking_fixture_boost"] = 1.0
+else:
+    df_players["attacking_fixture_boost"] = 1.0
+# -------------------------------------
 
 
 
