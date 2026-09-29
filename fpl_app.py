@@ -640,6 +640,7 @@ df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points,
 
     
     # --- FORCE ATTACKING BOOST DIRECTLY ---
+# --- FORCE ATTACKING BOOST DIRECTLY ---
 if "attacking_fixture_boost" not in df_players.columns:
     df_players["attacking_fixture_boost"] = 1.0
 
@@ -655,7 +656,6 @@ if conceded_col in df_players.columns:
 else:
     df_players["attacking_fixture_boost"] = 1.0
 # -------------------------------------
-
 
 
 # --- 4. APPLY FILTERING ---
