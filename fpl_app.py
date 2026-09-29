@@ -639,22 +639,30 @@ df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points,
 # Diagnostic column so the UI makes the attacking matchup adjustment visible.
 
     
-# --- CLEAN ATTACKING FIXTURE BOOST LOGIC (MIDS & FWD/ATT) ---
+# --- FOOLPROOF ATTACKING FIXTURE BOOST LOGIC ---
 df_players["attacking_fixture_boost"] = 1.0
 
-_pos_col = next((c for c in df_players.columns if c.lower() in ["position", "pos"]), None)
+_pos_col = next((c for c in df_players.columns if c.lower() in ["position", "pos", "element_type"]), None)
 _conc_col = next((c for c in df_players.columns if "conceded" in c.lower()), None)
 
 if _pos_col and _conc_col:
-    _pos_vals = df_players[_pos_col].astype(str).str.upper()
-    # Expanded regex to catch MID, FWD, ATT, or FORWARD
-    _is_mid_fwd = _pos_vals.str.contains("MID|FWD|ATT|FORWARD", regex=True)
+    # Handle both text descriptions and numeric FPL element types (MID=3, FWD/ATT=4)
+    _pos_raw = df_players[_pos_col]
+    
+    if pd.api.types.is_numeric_dtype(_pos_raw):
+        # Standard FPL API IDs: 3 = MID, 4 = FWD
+        _is_mid_fwd = _pos_raw.isin([3, 4])
+    else:
+        # Text-based positions: catch anything containing MID, FWD, ATT, or FORWARD
+        _pos_vals = _pos_raw.astype(str).str.upper()
+        _is_mid_fwd = _pos_vals.str.contains("MID|FWD|ATT|FORWARD", regex=True)
+    
     _conceded_vals = pd.to_numeric(df_players[_conc_col], errors="coerce").fillna(1.2)
     
-    # Apply boosts and penalties
+    # Apply boosts and penalties only to MIDs and FWDs
     df_players.loc[_is_mid_fwd & (_conceded_vals <= 0.8), "attacking_fixture_boost"] = 0.85
     df_players.loc[_is_mid_fwd & (_conceded_vals >= 1.5), "attacking_fixture_boost"] = 1.15
-# -----------------------------------------------------------
+# -----------------------------------------------
 # --- 4. APPLY FILTERING ---
 filtered_df = df_players.copy()
 
