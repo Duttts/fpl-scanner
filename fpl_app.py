@@ -563,8 +563,8 @@ def calculate_predicted_points(row):
     attacking_pts = min(attacking_pts, 6.0)  # Capped at 6.0 pts
 
     # 4. Defensive & Fixture Adjustments
-    fdr = float(row.get("dynamic_fdr", 3) or 3)
-    opp_goals = float(row.get("opp_goals_scored_per_match", 1.2) or 1.2)
+   fdr = float(row.get("dynamic_fdr", 3) or 3)
+    opp_goals = float(row.get("opp_goals_scored_per_match", 1.2) or 1.2) 
     
     # Safely retrieve and convert Opps.Goals Conceded (Last 5)
     raw_conceded = row.get("Opps.Goals Conceded (Last 5)", row.get("opp_goals_conceded_per_match", 1.2))
@@ -572,15 +572,24 @@ def calculate_predicted_points(row):
         opp_conceded = float(raw_conceded) if raw_conceded is not None and str(raw_conceded).strip() != "" else 1.2
     except (ValueError, TypeError):
         opp_conceded = 1.2
-    
-    # Fixture multiplier based on FDR
+        # 2. BASE FIXTURE MULTIPLIER
     fixture_factor = (6.0 - fdr) / 3.0
     
-    # Defender CS penalty/boost based on opponent goals scored
+    # 3. DEFENDER ADJUSTMENT (Opponent Goals Scored)
     if opp_goals <= 0.8:
         fixture_factor *= 1.15
     elif opp_goals >= 1.6:
         fixture_factor *= 0.85
+
+    # 4. ATTACKER ADJUSTMENT (Opponent Goals Conceded - Added here)
+    if pos in ["MID", "FWD"]:
+        if opp_conceded >= 1.5:
+            fixture_factor *= 1.15  # Boost attackers against leaky defenses
+        elif opp_conceded <= 0.8:
+            fixture_factor *= 0.85  # Penalize attackers against solid defenses
+    
+    # Fixture multiplier based on FDR
+   
 
     # Attacker boost/penalty based on opponent goals CONCEDED
     if pos in ["MID", "FWD"]:
