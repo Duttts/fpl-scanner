@@ -637,10 +637,7 @@ def calculate_predicted_points(row):
 df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points, axis=1)
 
 # Diagnostic column so the UI makes the attacking matchup adjustment visible.
-def get_boost_display(row):
-    pos = str(row.get("position", "")).upper()
-    if pos not in ["MID", "FWD"]:
-        return 1.0
+
     
     raw_conceded = row.get("Opp. Goals Conceded (Last 5)", row.get("opp_goals_conceded_per_match", 1.2))
     
@@ -660,7 +657,7 @@ def get_boost_display(row):
         return 0.85
     return 1.0
 
-df_players["attacking_fixture_boost"] = df_players.apply(get_boost_display, axis=1)
+
 
 # --- 4. APPLY FILTERING ---
 filtered_df = df_players.copy()
@@ -793,7 +790,22 @@ if not filtered_df.empty:
             "selected_by_percent": "Ownership %",
         }
     )
+# --- FORCE ATTACKING BOOST DIRECTLY ---
+if "attacking_fixture_boost" not in df_players.columns:
+    df_players["attacking_fixture_boost"] = 1.0
 
+is_mid_fwd = df_players["position"].str.upper().isin(["MID", "FWD"])
+conceded_col = "opp_goals_conceded_per_match" if "opp_goals_conceded_per_match" in df_players.columns else "Opp. Goals Conceded (Last 5)"
+
+if conceded_col in df_players.columns:
+    conceded_vals = pd.to_numeric(df_players[conceded_col], errors="coerce").fillna(1.2)
+    
+    df_players.loc[is_mid_fwd & (conceded_vals >= 1.5), "attacking_fixture_boost"] = 1.15
+    df_players.loc[is_mid_fwd & (conceded_vals <= 0.8), "attacking_fixture_boost"] = 0.85
+    df_players.loc[is_mid_fwd & (conceded_vals > 0.8) & (conceded_vals < 1.5), "attacking_fixture_boost"] = 1.0
+else:
+    df_players["attacking_fixture_boost"] = 1.0
+# -------------------------------------
     event = st.dataframe(
         renamed_df,
         use_container_width=True,
