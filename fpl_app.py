@@ -623,20 +623,25 @@ def calculate_predicted_points(row):
 df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points, axis=1)
 
 # Diagnostic column so the UI makes the attacking matchup adjustment visible.
-df_players["attacking_fixture_boost"] = df_players.apply(
-    lambda row: (
-        1.15
-        if str(row.get("position", "")).upper() in ["MID", "FWD"]
-        and float(row.get("opp_goals_conceded_per_match", 1.2) or 1.2) >= 1.5
-        else (
-            0.85
-            if str(row.get("position", "")).upper() in ["MID", "FWD"]
-            and float(row.get("opp_goals_conceded_per_match", 1.2) or 1.2) <= 0.8
-            else 1.0
-        )
-    ),
-    axis=1,
-)
+# Diagnostic column so the UI makes the attacking matchup adjustment visible.
+def get_boost_display(row):
+    pos = str(row.get("position", "")).upper()
+    if pos not in ["MID", "FWD"]:
+        return 1.0
+    
+    raw_val = row.get("opp_goals_conceded_per_match", 1.2)
+    try:
+        conceded = float(raw_val) if raw_val is not None and str(raw_val).strip() != "" else 1.2
+    except (ValueError, TypeError):
+        conceded = 1.2
+        
+    if conceded >= 1.5:
+        return 1.15
+    elif conceded <= 0.8:
+        return 0.85
+    return 1.0
+
+df_players["attacking_fixture_boost"] = df_players.apply(get_boost_display, axis=1)
 
 
 # --- 4. APPLY FILTERING ---
