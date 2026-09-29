@@ -533,9 +533,11 @@ df_players["def_contrib_per_90"] = df_players.apply(lambda r: calc_per_90(r, "de
 def calculate_predicted_points(row):
     minutes = float(row.get("minutes", 0) or 0)
     
+    # 1. Base Minutes & Confidence Scaling
     target_minutes = target_sample_mins if 'target_sample_mins' in globals() else 450.0
     minutes_ratio = min(minutes / target_minutes, 1.0)
     
+    # Penalty for low minutes sample
     if minutes_ratio < 0.4:
         confidence = minutes_ratio * 0.5
     elif minutes_ratio < 0.6:
@@ -543,42 +545,35 @@ def calculate_predicted_points(row):
     else:
         confidence = minutes_ratio
 
-    # 1. FIX: Use 'position' string to match ["MID", "FWD", "DEF", "GKP"]
-    pos = str(row.get("position", "MID")).upper()
-    
+    # 2. Extract Metrics Per 90
+    pos = str(row.get("position", "")).upper()
     xgi_p90 = float(row.get("xgi_per_90", 0) or 0)
-    threat_p90 = float(row.get("threat_per_90", 0) or 0) / 100.0
+    threat_p90 = float(row.get("threat_per_90", 0) or 0) / 100.0  # Scaled ~0.0 - 1.2+
     influence_p90 = float(row.get("influence_per_90", 0) or 0)
     bps_p90 = float(row.get("bps_per_90", 0) or 0)
 
+    # 3. Balanced Attacking Points (xGI + Threat)
     if pos in ["FWD", "MID"]:
         attacking_pts = (xgi_p90 * 2.5) + (threat_p90 * 1.5)
     elif pos == "DEF":
         attacking_pts = (xgi_p90 * 2.0) + (threat_p90 * 1.0)
-    else:
+    else:  # GKP
         attacking_pts = (xgi_p90 * 1.5) + (threat_p90 * 0.5)
         
-    attacking_pts = min(attacking_pts, 6.0)
+    attacking_pts = min(attacking_pts, 6.0)  # Capped at 6.0 pts
 
-    # 2. FIX: Position-specific Opponent Scoring vs Conceding Logic
+    # 4. Defensive & Fixture Adjustments
     fdr = float(row.get("dynamic_fdr", 3) or 3)
-    opp_conceded = float(row.get("opp_goals_conceded_per_match", 1.2) or 1.2)
-    opp_scored = float(row.get("opp_goals_scored_per_match", 1.2) or 1.2)
+    opp_goals = float(row.get("opp_goals_scored_per_match", 1.2) or 1.2)
+    
+    # Fixture multiplier based on FDR and Opponent Threat
+    fixture_factor = (6.0 - fdr) / 3.0  # FDR 1 = 1.67, FDR 3 = 1.0, FDR 5 = 0.33
+    if opp_goals <= 0.8:
+        fixture_factor *= 1.15
+    elif opp_goals >= 1.6:
+        fixture_factor *= 0.85
 
-    fixture_factor = (6.0 - fdr) / 3.0  # Base FDR factor
-
-    if pos in ["MID", "FWD"]:
-        if opp_conceded >= 1.5:
-            fixture_factor *= 1.15  # Boost attackers against leaky defenses
-        elif opp_conceded <= 0.8:
-            fixture_factor *= 0.85  # Penalize attackers against solid defenses
-    elif pos in ["DEF", "GKP"]:
-        if opp_scored <= 0.8:
-            fixture_factor *= 1.15  # Boost defenders against blunt attacks
-        elif opp_scored >= 1.6:
-            fixture_factor *= 0.85  # Penalize defenders against strong attacks
-
-    # 3. Clean Sheet & Performance Points Calculation
+    # Position Clean Sheet Potential
     cs_base = 0.0
     if pos in ["GKP", "DEF"]:
         cs_base = 4.0
@@ -587,51 +582,20 @@ def calculate_predicted_points(row):
         
     defensive_pts = cs_base * (fixture_factor / 2.0)
 
+    # 5. Influence Component
     influence_pts = min(influence_p90 / 25.0, 1.5)
+
+    # 6. Bonus Point System (BPS) Component
     bps_pts = min(bps_p90 / 30.0, 1.5)
 
+    # 7. Final Expected Points Assembly
     appearance_pts = 2.0 if minutes_ratio >= 0.5 else (1.0 if minutes_ratio > 0 else 0.0)
     
     performance_score = (attacking_pts + defensive_pts + influence_pts + bps_pts) * fixture_factor
     predicted_points = appearance_pts + (performance_score * confidence)
 
     return round(max(0.0, min(predicted_points, 15.0)), 2)
-# ==========================================
-# UNIVERSAL FIX: Merge Opponent Form for ALL Players
-# ==========================================
 
-# 1. Fetch recent team form (last 5 completed matches)
-df_team_form = get_team_recent_form(num_matches=5)
-
-# 2. Convert team ID columns to integers to ensure a match
-if "opponent_team" in df_players.columns:
-    df_players["opponent_team"] = pd.to_numeric(df_players["opponent_team"], errors="coerce").fillna(0).astype(int)
-
-if "opponent_team_id" in df_team_form.columns:
-    df_team_form["opponent_team_id"] = pd.to_numeric(df_team_form["opponent_team_id"], errors="coerce").fillna(0).astype(int)
-
-# 3. Drop old unmerged columns to prevent naming conflicts
-df_players = df_players.drop(
-    columns=["opp_goals_conceded_per_match", "opp_goals_scored_per_match", "opponent_team_id"], 
-    errors="ignore"
-)
-
-# 4. Merge team form metrics into df_players
-df_players = df_players.merge(
-    df_team_form,
-    left_on="opponent_team",
-    right_on="opponent_team_id",
-    how="left"
-)
-
-# 5. Fallback default for missing data
-df_players["opp_goals_conceded_per_match"] = df_players["opp_goals_conceded_per_match"].fillna(1.2)
-df_players["opp_goals_scored_per_match"] = df_players["opp_goals_scored_per_match"].fillna(1.2)
-
-# ==========================================
-# THEN RUN CALCULATIONS FOR ALL PLAYERS
-# ==========================================
-df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points, axis=1)
 df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points, axis=1)
 
 # --- 4. APPLY FILTERING ---
@@ -835,3 +799,4 @@ if manager_id and df_players is not None:
             # Additional logic can follow here
     except Exception as e:
         st.sidebar.error("Could not fetch team data. Check your Manager ID.")
+
