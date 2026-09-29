@@ -531,7 +531,7 @@ df_players["def_contrib_per_90"] = df_players.apply(lambda r: calc_per_90(r, "de
 
 # --- PREDICTIVE MODEL CALCULATION ---
 def calculate_predicted_points(row):
-    def calculate_predicted_points(row):
+    
     # --- TEMPORARY DEBUG CHECK ---
     if "Tavernier" in str(row.get("second_name", "")) or "Tavernier" in str(row.get("web_name", "")):
         print("--- TAVERNIER DEBUG ---")
