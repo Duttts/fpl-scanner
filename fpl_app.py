@@ -533,11 +533,9 @@ df_players["def_contrib_per_90"] = df_players.apply(lambda r: calc_per_90(r, "de
 def calculate_predicted_points(row):
     minutes = float(row.get("minutes", 0) or 0)
     
-    # 1. Base Minutes & Confidence Scaling
     target_minutes = target_sample_mins if 'target_sample_mins' in globals() else 450.0
     minutes_ratio = min(minutes / target_minutes, 1.0)
     
-    # Penalty for low minutes sample
     if minutes_ratio < 0.4:
         confidence = minutes_ratio * 0.5
     elif minutes_ratio < 0.6:
@@ -545,35 +543,42 @@ def calculate_predicted_points(row):
     else:
         confidence = minutes_ratio
 
-    # 2. Extract Metrics Per 90
-    pos = str(row.get("position", "")).upper()
+    # 1. FIX: Use 'position' string to match ["MID", "FWD", "DEF", "GKP"]
+    pos = str(row.get("position", "MID")).upper()
+    
     xgi_p90 = float(row.get("xgi_per_90", 0) or 0)
-    threat_p90 = float(row.get("threat_per_90", 0) or 0) / 100.0  # Scaled ~0.0 - 1.2+
+    threat_p90 = float(row.get("threat_per_90", 0) or 0) / 100.0
     influence_p90 = float(row.get("influence_per_90", 0) or 0)
     bps_p90 = float(row.get("bps_per_90", 0) or 0)
 
-    # 3. Balanced Attacking Points (xGI + Threat)
     if pos in ["FWD", "MID"]:
         attacking_pts = (xgi_p90 * 2.5) + (threat_p90 * 1.5)
     elif pos == "DEF":
         attacking_pts = (xgi_p90 * 2.0) + (threat_p90 * 1.0)
-    else:  # GKP
+    else:
         attacking_pts = (xgi_p90 * 1.5) + (threat_p90 * 0.5)
         
-    attacking_pts = min(attacking_pts, 6.0)  # Capped at 6.0 pts
+    attacking_pts = min(attacking_pts, 6.0)
 
-    # 4. Defensive & Fixture Adjustments
+    # 2. FIX: Position-specific Opponent Scoring vs Conceding Logic
     fdr = float(row.get("dynamic_fdr", 3) or 3)
-    opp_goals = float(row.get("opp_goals_scored_per_match", 1.2) or 1.2)
-    
-    # Fixture multiplier based on FDR and Opponent Threat
-    fixture_factor = (6.0 - fdr) / 3.0  # FDR 1 = 1.67, FDR 3 = 1.0, FDR 5 = 0.33
-    if opp_goals <= 0.8:
-        fixture_factor *= 1.15
-    elif opp_goals >= 1.6:
-        fixture_factor *= 0.85
+    opp_conceded = float(row.get("opp_goals_conceded_per_match", 1.2) or 1.2)
+    opp_scored = float(row.get("opp_goals_scored_per_match", 1.2) or 1.2)
 
-    # Position Clean Sheet Potential
+    fixture_factor = (6.0 - fdr) / 3.0  # Base FDR factor
+
+    if pos in ["MID", "FWD"]:
+        if opp_conceded >= 1.5:
+            fixture_factor *= 1.15  # Boost attackers against leaky defenses
+        elif opp_conceded <= 0.8:
+            fixture_factor *= 0.85  # Penalize attackers against solid defenses
+    elif pos in ["DEF", "GKP"]:
+        if opp_scored <= 0.8:
+            fixture_factor *= 1.15  # Boost defenders against blunt attacks
+        elif opp_scored >= 1.6:
+            fixture_factor *= 0.85  # Penalize defenders against strong attacks
+
+    # 3. Clean Sheet & Performance Points Calculation
     cs_base = 0.0
     if pos in ["GKP", "DEF"]:
         cs_base = 4.0
@@ -582,13 +587,9 @@ def calculate_predicted_points(row):
         
     defensive_pts = cs_base * (fixture_factor / 2.0)
 
-    # 5. Influence Component
     influence_pts = min(influence_p90 / 25.0, 1.5)
-
-    # 6. Bonus Point System (BPS) Component
     bps_pts = min(bps_p90 / 30.0, 1.5)
 
-    # 7. Final Expected Points Assembly
     appearance_pts = 2.0 if minutes_ratio >= 0.5 else (1.0 if minutes_ratio > 0 else 0.0)
     
     performance_score = (attacking_pts + defensive_pts + influence_pts + bps_pts) * fixture_factor
