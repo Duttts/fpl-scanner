@@ -640,21 +640,24 @@ df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points,
 
     
     # --- FORCE ATTACKING BOOST DIRECTLY ---
-# --- FORCE ATTACKING BOOST DIRECTLY ---
+# --- FLAT ATTACKING BOOST OVERRIDE ---
 if "attacking_fixture_boost" not in df_players.columns:
     df_players["attacking_fixture_boost"] = 1.0
 
-is_mid_fwd = df_players["position"].str.upper().isin(["MID", "FWD"])
-conceded_col = "opp_goals_conceded_per_match" if "opp_goals_conceded_per_match" in df_players.columns else "Opp. Goals Conceded (Last 5)"
+# Determine the correct conceded column safely
+_conceded_col = "opp_goals_conceded_per_match" if "opp_goals_conceded_per_match" in df_players.columns else "Opp. Goals Conceded (Last 5)"
+if _conceded_col not in df_players.columns:
+    df_players[_conceded_col] = 1.2
 
-if conceded_col in df_players.columns:
-    conceded_vals = pd.to_numeric(df_players[conceded_col], errors="coerce").fillna(1.2)
-    
-    df_players.loc[is_mid_fwd & (conceded_vals >= 1.5), "attacking_fixture_boost"] = 1.15
-    df_players.loc[is_mid_fwd & (conceded_vals <= 0.8), "attacking_fixture_boost"] = 0.85
-    df_players.loc[is_mid_fwd & (conceded_vals > 0.8) & (conceded_vals < 1.5), "attacking_fixture_boost"] = 1.0
-else:
-    df_players["attacking_fixture_boost"] = 1.0
+_conceded_vals = pd.to_numeric(df_players[_conceded_col], errors="coerce").fillna(1.2)
+_is_mid_fwd = df_players["position"].str.upper().isin(["MID", "FWD"])
+
+# Reset default first
+df_players["attacking_fixture_boost"] = 1.0
+
+# Apply boosts and penalties flatly
+df_players.loc[_is_mid_fwd & (_conceded_vals >= 1.5), "attacking_fixture_boost"] = 1.15
+df_players.loc[_is_mid_fwd & (_conceded_vals <= 0.8), "attacking_fixture_boost"] = 0.85
 # -------------------------------------
 
 
