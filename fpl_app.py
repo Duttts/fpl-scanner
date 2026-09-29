@@ -530,8 +530,6 @@ df_players["def_contrib_per_90"] = df_players.apply(lambda r: calc_per_90(r, "de
 
 
 # --- PREDICTIVE MODEL CALCULATION ---
-if "Tavernier" in str(row.get("second_name", "")):
-    print(f"DEBUG Tavernier -> opp_conceded: {opp_conceded}, fixture_factor: {fixture_factor}")
 def calculate_predicted_points(row):
     minutes = float(row.get("minutes", 0) or 0)
     
@@ -598,7 +596,42 @@ def calculate_predicted_points(row):
     predicted_points = appearance_pts + (performance_score * confidence)
 
     return round(max(0.0, min(predicted_points, 15.0)), 2)
+# ==========================================
+# UNIVERSAL FIX: Merge Opponent Form for ALL Players
+# ==========================================
 
+# 1. Fetch recent team form (last 5 completed matches)
+df_team_form = get_team_recent_form(num_matches=5)
+
+# 2. Convert team ID columns to integers to ensure a match
+if "opponent_team" in df_players.columns:
+    df_players["opponent_team"] = pd.to_numeric(df_players["opponent_team"], errors="coerce").fillna(0).astype(int)
+
+if "opponent_team_id" in df_team_form.columns:
+    df_team_form["opponent_team_id"] = pd.to_numeric(df_team_form["opponent_team_id"], errors="coerce").fillna(0).astype(int)
+
+# 3. Drop old unmerged columns to prevent naming conflicts
+df_players = df_players.drop(
+    columns=["opp_goals_conceded_per_match", "opp_goals_scored_per_match", "opponent_team_id"], 
+    errors="ignore"
+)
+
+# 4. Merge team form metrics into df_players
+df_players = df_players.merge(
+    df_team_form,
+    left_on="opponent_team",
+    right_on="opponent_team_id",
+    how="left"
+)
+
+# 5. Fallback default for missing data
+df_players["opp_goals_conceded_per_match"] = df_players["opp_goals_conceded_per_match"].fillna(1.2)
+df_players["opp_goals_scored_per_match"] = df_players["opp_goals_scored_per_match"].fillna(1.2)
+
+# ==========================================
+# THEN RUN CALCULATIONS FOR ALL PLAYERS
+# ==========================================
+df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points, axis=1)
 df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points, axis=1)
 
 # --- 4. APPLY FILTERING ---
