@@ -639,15 +639,14 @@ df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points,
 # Diagnostic column so the UI makes the attacking matchup adjustment visible.
 
     
-# --- DASHBOARD DEBUG BLOCK ---
+# --- SMART DEBUG BLOCK (SAMPLE MIDS/FWDS) ---
 df_players["attacking_fixture_boost"] = 1.0
 
 _pos_col = next((c for c in df_players.columns if c.lower() in ["position", "pos"]), None)
 _conc_col = next((c for c in df_players.columns if "conceded" in c.lower()), None)
 
-# Show what columns were found directly on the app screen temporarily
 import streamlit as st
-st.write(f"**Debug Info:** Position Column Found: `{_pos_col}` | Conceded Column Found: `{_conc_col}`")
+st.write(f"**Debug Info:** Position Col: `{_pos_col}` | Conceded Col: `{_conc_col}`")
 
 if _pos_col and _conc_col:
     _pos_vals = df_players[_pos_col].astype(str).str.upper()
@@ -657,9 +656,11 @@ if _pos_col and _conc_col:
     df_players.loc[_is_mid_fwd & (_conceded_vals <= 0.8), "attacking_fixture_boost"] = 0.85
     df_players.loc[_is_mid_fwd & (_conceded_vals >= 1.5), "attacking_fixture_boost"] = 1.15
     
-    # Show a small preview table on the app screen
-    st.dataframe(df_players[[_pos_col, _conc_col, "attacking_fixture_boost"]].head(5))
-# -----------------------------
+    # Show a preview specifically of MID/FWD players on the app screen
+    _mid_fwd_df = df_players[_is_mid_fwd]
+    st.write(f"**MID/FWD Players Preview (Total found: {len(_mid_fwd_df)}):**")
+    st.dataframe(_mid_fwd_df[[ _pos_col, _conc_col, "attacking_fixture_boost"]].head(8))
+# ---------------------------------------------
 # --- 4. APPLY FILTERING ---
 filtered_df = df_players.copy()
 
