@@ -532,10 +532,7 @@ df_players["def_contrib_per_90"] = df_players.apply(lambda r: calc_per_90(r, "de
 # --- PREDICTIVE MODEL CALCULATION ---
 def calculate_predicted_points(row):
     minutes = float(row.get("minutes", 0) or 0)
-    # Temporary debug print to see exact row keys and values for Tavernier
-if "Tavernier" in str(row.get("second_name", "")) or "Tavernier" in str(row.get("web_name", "")):
-    print("KEYS IN ROW:", list(row.index if hasattr(row, 'index') else row.keys()))
-    print("RAW VALUE:", row.get("Opps.Goals Conceded (Last 5)"))
+    
     # 1. Base Minutes & Confidence Scaling
     target_minutes = target_sample_mins if 'target_sample_mins' in globals() else 450.0
     minutes_ratio = min(minutes / target_minutes, 1.0)
@@ -569,19 +566,23 @@ if "Tavernier" in str(row.get("second_name", "")) or "Tavernier" in str(row.get(
     fdr = float(row.get("dynamic_fdr", 3) or 3)
     opp_goals = float(row.get("opp_goals_scored_per_match", 1.2) or 1.2)
     
-    # Extract opponent goals CONCEDED directly from your "Opps.Goals Conceded (Last 5)" column
-    opp_conceded = float(row.get("Opps.Goals Conceded (Last 5)", 1.2) or 1.2)
+    # Safely retrieve and convert Opps.Goals Conceded (Last 5)
+    raw_conceded = row.get("Opps.Goals Conceded (Last 5)", row.get("opp_goals_conceded_per_match", 1.2))
+    try:
+        opp_conceded = float(raw_conceded) if raw_conceded is not None and str(raw_conceded).strip() != "" else 1.2
+    except (ValueError, TypeError):
+        opp_conceded = 1.2
     
-    # Fixture multiplier based on FDR and Opponent Threat
-    fixture_factor = (6.0 - fdr) / 3.0  # FDR 1 = 1.67, FDR 3 = 1.0, FDR 5 = 0.33
+    # Fixture multiplier based on FDR
+    fixture_factor = (6.0 - fdr) / 3.0
     
-    # Adjustment for Defenders/GKs based on opponent goals SCORED
+    # Defender CS penalty/boost based on opponent goals scored
     if opp_goals <= 0.8:
         fixture_factor *= 1.15
     elif opp_goals >= 1.6:
         fixture_factor *= 0.85
 
-    # NEW: Attacking Adjustment for MID/FWD based on opponent goals CONCEDED
+    # Attacker boost/penalty based on opponent goals CONCEDED
     if pos in ["MID", "FWD"]:
         if opp_conceded >= 1.5:
             fixture_factor *= 1.15  # Boost attackers against leaky defenses
