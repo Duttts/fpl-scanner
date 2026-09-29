@@ -532,7 +532,10 @@ df_players["def_contrib_per_90"] = df_players.apply(lambda r: calc_per_90(r, "de
 # --- PREDICTIVE MODEL CALCULATION ---
 def calculate_predicted_points(row):
     minutes = float(row.get("minutes", 0) or 0)
-    
+    # Temporary debug print to see exact row keys and values for Tavernier
+if "Tavernier" in str(row.get("second_name", "")) or "Tavernier" in str(row.get("web_name", "")):
+    print("KEYS IN ROW:", list(row.index if hasattr(row, 'index') else row.keys()))
+    print("RAW VALUE:", row.get("Opps.Goals Conceded (Last 5)"))
     # 1. Base Minutes & Confidence Scaling
     target_minutes = target_sample_mins if 'target_sample_mins' in globals() else 450.0
     minutes_ratio = min(minutes / target_minutes, 1.0)
