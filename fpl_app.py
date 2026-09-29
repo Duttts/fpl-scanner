@@ -626,18 +626,14 @@ df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points,
 # Diagnostic column so the UI makes the attacking matchup adjustment visible.
 # Diagnostic column so the UI makes the attacking matchup adjustment visible.
 # Diagnostic column so the UI makes the attacking matchup adjustment visible.
+# Diagnostic column so the UI makes the attacking matchup adjustment visible.
 def get_boost_display(row):
     pos = str(row.get("position", "")).upper()
     if pos not in ["MID", "FWD"]:
         return 1.0
     
-    # Check both possible key names to ensure we catch it
-    raw_val = row.get("Opp.Goals Conceded (Last 5)", row.get("opp_goals_conceded_per_match", 1.2))
-    
-    try:
-        conceded = float(raw_val) if raw_val is not None and str(raw_val).strip() != "" else 1.2
-    except (ValueError, TypeError):
-        conceded = 1.2
+    # Directly read the numeric column already populated in df_players
+    conceded = float(row.get("opp_goals_conceded_per_match", 1.2))
         
     if conceded >= 1.5:
         return 1.15
