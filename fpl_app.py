@@ -640,9 +640,9 @@ df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points,
 
     
  # --- SMART AUTO-DETECT BOOST OVERRIDE ---
+# --- SMART AUTO-DETECT BOOST (CORRECTED DIRECTION) ---
 df_players["attacking_fixture_boost"] = 1.0
 
-# Automatically find position and conceded columns
 _pos_col = next((c for c in df_players.columns if c.lower() in ["position", "pos"]), None)
 _conc_col = next((c for c in df_players.columns if "conceded" in c.lower()), None)
 
@@ -652,11 +652,12 @@ if _pos_col and _conc_col:
     
     _conceded_vals = pd.to_numeric(df_players[_conc_col], errors="coerce").fillna(1.2)
     
-    df_players.loc[_is_mid_fwd & (_conceded_vals >= 1.5), "attacking_fixture_boost"] = 1.15
-    df_pins = _is_mid_fwd & (_conceded_vals <= 0.8)
+    # CORRECTED LOGIC:
+    # Tough defense (low conceded <= 0.8) -> penalty (0.85)
+    # Weak defense (high conceded >= 1.5) -> boost (1.15)
     df_players.loc[_is_mid_fwd & (_conceded_vals <= 0.8), "attacking_fixture_boost"] = 0.85
-# ----------------------------------------
-
+    df_players.loc[_is_mid_fwd & (_conceded_vals >= 1.5), "attacking_fixture_boost"] = 1.15
+# ----------------------------------------------------
 
 # --- 4. APPLY FILTERING ---
 filtered_df = df_players.copy()
