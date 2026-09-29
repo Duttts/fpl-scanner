@@ -583,7 +583,7 @@ def calculate_predicted_points(row):
     defensive_pts = cs_base * (fixture_factor / 2.0)
 
     # 5. Influence Component
-    influence_pts = min(influence_p90 / 50.0, 2.0)
+    influence_pts = min(influence_p90 / 25.0, 1.5)
 
     # 6. Bonus Point System (BPS) Component
     bps_pts = min(bps_p90 / 30.0, 1.5)
