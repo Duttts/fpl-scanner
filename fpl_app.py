@@ -639,25 +639,30 @@ df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points,
 # Diagnostic column so the UI makes the attacking matchup adjustment visible.
 
     
- # --- SMART AUTO-DETECT BOOST OVERRIDE ---
-# --- SMART AUTO-DETECT BOOST (CORRECTED DIRECTION) ---
+# --- DEBUG SCANNER FOR BOOST ---
 df_players["attacking_fixture_boost"] = 1.0
 
 _pos_col = next((c for c in df_players.columns if c.lower() in ["position", "pos"]), None)
+
+# Let's print out all columns containing 'conceded' to your terminal so we see the exact name
+_conceded_candidates = [c for c in df_players.columns if "conceded" in c.lower()]
+print(f"AVAILABLE CONCEDED COLUMNS FOUND: {_conceded_candidates}")
+
 _conc_col = next((c for c in df_players.columns if "conceded" in c.lower()), None)
+print(f"CHOSEN CONCEDED COLUMN: {_conc_col}")
 
 if _pos_col and _conc_col:
     _pos_vals = df_players[_pos_col].astype(str).str.upper()
     _is_mid_fwd = _pos_vals.str.contains("MID|FWD", regex=True)
-    
     _conceded_vals = pd.to_numeric(df_players[_conc_col], errors="coerce").fillna(1.2)
     
-    # CORRECTED LOGIC:
-    # Tough defense (low conceded <= 0.8) -> penalty (0.85)
-    # Weak defense (high conceded >= 1.5) -> boost (1.15)
+    # Apply boosts
     df_players.loc[_is_mid_fwd & (_conceded_vals <= 0.8), "attacking_fixture_boost"] = 0.85
     df_players.loc[_is_mid_fwd & (_conceded_vals >= 1.5), "attacking_fixture_boost"] = 1.15
-# ----------------------------------------------------
+
+    # Print a sample of what it calculated for a few players
+    print(df_players[[ _pos_col, _conc_col, "attacking_fixture_boost"]].head(10))
+# ---------------------------------
 
 # --- 4. APPLY FILTERING ---
 filtered_df = df_players.copy()
