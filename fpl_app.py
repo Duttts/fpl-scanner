@@ -563,15 +563,29 @@ def calculate_predicted_points(row):
     attacking_pts = min(attacking_pts, 6.0)  # Capped at 6.0 pts
 
     # 4. Defensive & Fixture Adjustments
-    fdr = float(row.get("dynamic_fdr", 3) or 3)
-    opp_goals = float(row.get("opp_goals_scored_per_match", 1.2) or 1.2)
-    
-    # Fixture multiplier based on FDR and Opponent Threat
-    fixture_factor = (6.0 - fdr) / 3.0  # FDR 1 = 1.67, FDR 3 = 1.0, FDR 5 = 0.33
-    if opp_goals <= 0.8:
-        fixture_factor *= 1.15
-    elif opp_goals >= 1.6:
-        fixture_factor *= 0.85
+    # --- STEP 4: DEFENSIVE & FIXTURE ADJUSTMENTS ---
+fdr = float(row.get("dynamic_fdr", 3) or 3)
+opp_conceded = float(row.get("opp_goals_conceded_per_match", 1.2) or 1.2)
+opp_scored = float(row.get("opp_goals_scored_per_match", 1.2) or 1.2)
+
+# Base FDR multiplier
+fixture_factor = (6.0 - fdr) / 3.0  
+
+pos = row.get("element_type", "MID")  # or whatever position column name you use
+
+if pos in ["MID", "FWD"]:
+    # Attackers care about how many goals the opponent CONCEDES
+    if opp_conceded >= 1.5:
+        fixture_factor *= 1.15  # Boost attackers against leaky defenses
+    elif opp_conceded <= 0.8:
+        fixture_factor *= 0.85  # Penalize attackers against tight defenses
+
+elif pos in ["DEF", "GKP"]:
+    # Defenders care about how many goals the opponent SCORES
+    if opp_scored <= 0.8:
+        fixture_factor *= 1.15  # Boost clean sheet potential against blunt attacks
+    elif opp_scored >= 1.6:
+        fixture_factor *= 0.85  # Penalize clean sheet potential against potent attacks
 
     # Position Clean Sheet Potential
     cs_base = 0.0
