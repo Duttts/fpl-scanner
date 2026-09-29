@@ -639,26 +639,13 @@ df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points,
 # Diagnostic column so the UI makes the attacking matchup adjustment visible.
 
     
-    # --- FORCE ATTACKING BOOST DIRECTLY ---
-# --- FLAT ATTACKING BOOST OVERRIDE ---
-if "attacking_fixture_boost" not in df_players.columns:
-    df_players["attacking_fixture_boost"] = 1.0
-
-# Determine the correct conceded column safely
-_conceded_col = "opp_goals_conceded_per_match" if "opp_goals_conceded_per_match" in df_players.columns else "Opp. Goals Conceded (Last 5)"
-if _conceded_col not in df_players.columns:
-    df_players[_conceded_col] = 1.2
-
-_conceded_vals = pd.to_numeric(df_players[_conceded_col], errors="coerce").fillna(1.2)
-_is_mid_fwd = df_players["position"].str.upper().isin(["MID", "FWD"])
-
-# Reset default first
+  # --- 100% LINEAR BOOST OVERRIDE (NO IF STATEMENTS) ---
 df_players["attacking_fixture_boost"] = 1.0
-
-# Apply boosts and penalties flatly
+_conceded_vals = pd.to_numeric(df_players.get("opp_goals_conceded_per_match", df_players.get("Opp. Goals Conceded (Last 5)", 1.2)), errors="coerce").fillna(1.2)
+_is_mid_fwd = df_players["position"].str.upper().isin(["MID", "FWD"])
 df_players.loc[_is_mid_fwd & (_conceded_vals >= 1.5), "attacking_fixture_boost"] = 1.15
 df_players.loc[_is_mid_fwd & (_conceded_vals <= 0.8), "attacking_fixture_boost"] = 0.85
-# -------------------------------------
+# ----------------------------------------------------
 
 
 # --- 4. APPLY FILTERING ---
