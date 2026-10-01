@@ -602,6 +602,12 @@ def calculate_predicted_points(row):
         # You can adjust this boost multiplier or make it an additive points bonus (e.g., +0.35 points)
         # Here we apply a 15% boost to their performance score/expected points, or add a flat +0.35 pts:
         predicted_points += 0.35  # Adds a flat 0.35 expected point boost against leaky defenses
+        # --- BLUNT OPPONENT ATTACK BOOST (DEFENDERS ONLY) ---
+    opp_goals_scored = float(row.get("opp_goals_scored_per_match", 1.2) or 1.2)
+    
+    if pos in ["DEFENDER", "DEF"] and opp_goals_scored <= 1.0:
+        predicted_points += 0.35  # Modest boost for defenders facing a blunt attack
+
     
     return round(max(0.0, min(predicted_points, 15.0)), 2)
 df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points, axis=1)
