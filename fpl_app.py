@@ -530,6 +530,7 @@ df_players["def_contrib_per_90"] = df_players.apply(lambda r: calc_per_90(r, "de
 
 
 # --- PREDICTIVE MODEL CALCULATION ---
+# --- PREDICTIVE MODEL CALCULATION ---
 def calculate_predicted_points(row):
     minutes = float(row.get("minutes", 0) or 0)
     
@@ -594,8 +595,15 @@ def calculate_predicted_points(row):
     performance_score = (attacking_pts + defensive_pts + influence_pts + bps_pts) * fixture_factor
     predicted_points = appearance_pts + (performance_score * confidence)
 
-    return round(max(0.0, min(predicted_points, 15.0)), 2)
+    # --- LEAKY OPPONENT GOALS CONCEDED BOOST ---
+    # If the upcoming opponent concedes an average of 1.5+ goals per match (last 5 games), apply a boost
+    opp_goals_conceded = float(row.get("opp_goals_conceded_per_match", 0.0) or 0.0)
+    if opp_goals_conceded >= 1.5:
+        # You can adjust this boost multiplier or make it an additive points bonus (e.g., +0.75 points)
+        # Here we apply a 15% boost to their performance score/expected points, or add a flat +0.75 pts:
+        predicted_points += 0.75  # Adds a flat 0.75 expected point boost against leaky defenses
 
+    return round(max(0.0, min(predicted_points, 15.0)), 2)
 df_players["predicted_gw_points"] = df_players.apply(calculate_predicted_points, axis=1)
 
 # --- 4. APPLY FILTERING ---
